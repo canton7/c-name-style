@@ -22,7 +22,7 @@ class ConfigRule:
     name: str
     # Name of kind (e.g. variable) -> set of qualifiers (e.g. [static])
     kinds: dict[str, set[str] | None]
-    is_pointer: bool | None
+    visibility: list[str] | None
     rule: str
     
 class NameConfig:
@@ -68,63 +68,72 @@ class NameConfig:
             rule = section.get("rule")
             if rule is None:
                 raise Exception(f"Section {section_name} does not have a 'rule' member")
-            is_pointer = section.getboolean("pointer", None)
+            
+            visibility = section.get("visibility")
+            if visibility is not None:
+                visibility = [x.strip() for x in visibility.split(',')]
 
-            self._rules.append(ConfigRule(name=section_name, kinds=kinds, is_pointer=is_pointer, rule=rule))
+            self._rules.append(ConfigRule(name=section_name, kinds=kinds, visibility=visibility, rule=rule))
 
     # def _get_name(self, cursor):
     #     if cursor.kind == CursorKind.FUNCTION_DECL:
     #         return cursor.spelling
     #     return cursor.displayname
 
-    def _get_config_kind(self, cursor, file_path):
+    # (type, visibility)
+    def _get_config_kind(self, cursor, file_path) -> tuple[str | None, str | None]:
         is_header = file_path.suffix in ['.h', '.hpp']
         if cursor.kind == CursorKind.PARM_DECL:
-            return "parameter"
+            return ("parameter", None)
         if cursor.kind == CursorKind.VAR_DECL:
             if cursor.linkage == LinkageKind.EXTERNAL:
-                return "global_variable"
+                return ("variable", "global")
             if cursor.linkage == LinkageKind.INTERNAL:
-                return "static_variable"
+                return ("variable", "global" if is_header else "file")
             if cursor.linkage == LinkageKind.NO_LINKAGE:
-                return "local_variable"
+                return ("variable", "local")
             print(f"WARNING: Unexpected linkage {cursor.linkage} for {cursor.spelling}")
-            return None
+            return (None, None)
         if cursor.kind == CursorKind.FUNCTION_DECL:
             # Inline functions in headers are counted as globals
             if cursor.linkage == LinkageKind.EXTERNAL or (conf.lib.clang_Cursor_isFunctionInlined(cursor) and is_header):
-                return "global_function"
+                return ("function", "global")
             if cursor.linkage == LinkageKind.INTERNAL:
-                return "static_function"
+                return ("function", "file")
             print(f"WARNING: Unexpected linkage {cursor.linkage} for {cursor.spelling}")
-            return None
+            return (None, None)
         if cursor.kind == CursorKind.STRUCT_DECL:
-            return "struct_tag"
+            return ("struct_tag", "global" if is_header else "file")
         if cursor.kind == CursorKind.ENUM_DECL:
-            return "enum_tag"
+            print(cursor.spelling)
+            print(f"\"{cursor.type.get_declaration().displayname}\"")
+            return ("enum_tag", "global" if is_header else "file")
         if cursor.kind == CursorKind.TYPEDEF_DECL:
             underlying_type = cursor.underlying_typedef_type.get_canonical()
             if underlying_type.kind == TypeKind.RECORD:
-                return "struct_typedef"
+                return ("struct_typedef", "global" if is_header else "file")
             if underlying_type.kind == TypeKind.ENUM:
-                return "enum_typedef"
+                return ("enum_typedef", "global" if is_header else "file")
             if underlying_type.kind == TypeKind.POINTER:
                 if underlying_type.get_pointee().kind == TypeKind.FUNCTIONPROTO:
-                    return "function_pointer_typedef"
-            return None
+                    return ("function_pointer_typedef", "global" if is_header else "file")
+            return (None, None)
         if cursor.kind == CursorKind.FIELD_DECL:
-            return "struct_member"
+            return ("struct_member", None)
+        if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
+            return ("enum_member", "global" if is_header else "file")
         # if cursor.kind == CursorKind.TYPEDEF_DECL:
         #     print(f"{cursor.spelling} {cursor.underlying_typedef_type.get_canonical().kind}")
-        return None
+        return (None, None)
 
-    def find_rule(self, cursor):
+    def process(self, cursor, containing_type):
         if not conf.lib.clang_Location_isFromMainFile(cursor.location):
             return None
         
         file_path = Path(cursor.location.file.name)
 
-        config_kind = self._get_config_kind(cursor, file_path)
+        config_kind, visibility = self._get_config_kind(cursor, file_path)
+        # print(f"{cursor.spelling} {config_kind} {visibility}")
         if config_kind is None:
             return None
         
@@ -133,6 +142,9 @@ class NameConfig:
             'case:camel': '[a-z][a-zA-Z0-9]*',
             'case:pascal': '[A-Z][a-zA-Z0-9]*',
         }
+
+        # if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
+        #     print(cursor.semantic_parent.spelling)
         
         for rule in self._rules:
             if config_kind not in rule.kinds:
@@ -147,6 +159,9 @@ class NameConfig:
                 
                 if not any(x in rule_qualifiers for x in qualifiers):
                     continue
+
+            if visibility is not None and rule.visibility is not None and visibility not in rule.visibility:
+                continue
 
             # print(cursor.__dir__())
             name = cursor.spelling
@@ -163,19 +178,37 @@ c = NameConfig(config)
 
 Config.set_library_file(r"C:\Program Files\LLVM\bin\libclang.dll")
 
-def traverse(node):
-    c.find_rule(node)
+def traverse(cursor, containing_type = None):
+    c.process(cursor, containing_type)
 
-    # Don't recurse into typedefs for enums and structs, as that's a duplicate of recursing into the typedef'd type
-    # (which means we'll visit all struct/enum members twice)
-    if node.kind != CursorKind.TYPEDEF_DECL or node.underlying_typedef_type.get_canonical() not in [TypeKind.RECORD, TypeKind.ENUM]:
-        for child in node.get_children():
+    # Enums and structs can be typedef'd. If they are, we visit the decl first, and then the typedef.
+    # If an enum/struct is anonymous, we wait until we visit the typedef. Otherwise we visit it now, then don't recurse into the typedef.
+    # if cursor.kind in [CursorKind.ENUM_DECL, CursorKind.STRUCT_DECL]:
+    #     print(cursor.spelling)
+
+    # When we visit an enum/struct member, we want to remember the name of the containing typedef if any.
+    # Annoyingly we visit the enum decl before we visit its typedef, so we don't know ahead of time whether an enum is going to be
+    # typedef'd or not.
+
+    # Set containing_typedef when we enter a typedef. If we reach an enum decl and containing_typedef 
+    # if cursor.kind == CursorKind.TYPEDEF_DECL and cursor.underlying_typedef_type.get_canonical().kind == TypeKind.ENUM:
+    #     containing_type = cursor
+
+    # # If we visit a typedef for an enum, we want to remember the name of the containing type. 
+
+    # # Don't recurse into typedefs for enums and structs, as that's a duplicate of recursing into the typedef'd type
+    # # (which means we'll visit all struct/enum members twice)
+    if cursor.kind != CursorKind.TYPEDEF_DECL or cursor.underlying_typedef_type.get_canonical().kind not in [TypeKind.RECORD, TypeKind.ENUM]:
+        for child in cursor.get_children():
             traverse(child)
+    # print('Found %s %s [file=%s, line=%s, col=%s]' % (cursor.kind, cursor.displayname, cursor.location.file, cursor.location.line, cursor.location.column))
+
+    # for child in cursor.get_children():
+    #     traverse(child)
 
     # if node.kind == CursorKind.PARM_DECL:
     #     print(f"{node.spelling} {node.type.kind}")
 
-    # print('Found %s %s [file=%s, line=%s, col=%s]' % (node.kind, node.displayname, node.location.file, node.location.line, node.location.column))
 
 
 idx = clang.cindex.Index.create()

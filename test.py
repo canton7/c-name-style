@@ -80,6 +80,29 @@ class NameConfig:
     #         return cursor.spelling
     #     return cursor.displayname
 
+    def _is_struct_or_enum_unnamed(self, struct_or_enum, cursor) -> bool:
+        # If a struct/enum is unnamed, clang takes the typedef name as the name.
+        # (The C API has methods to query this, but they're not exposed to Python)
+        # Therefore we need to look at the tokens to figure out.
+        # Look for the 'struct', then the following '{', and see if the typedef name appears in between.
+        # (People can do things like 'typedef struct /* foo */ {')
+        # We might also see e.g. 'typedef struct T_tag T_t', so there might not be a '{'
+        # Look for 'struct/enum' and '{', with the thing that might be the tag name or might be the
+        # typedef name in the middle. If we find the 'struct/enum' and '{' but not the name, it's
+        # unnamed.
+        struct_or_enum = 'struct' if cursor.kind == CursorKind.STRUCT_DECL else 'enum'
+        tokens = [x.spelling for x in cursor.get_tokens()]
+        try:
+            struct_or_enum_pos = tokens.index(struct_or_enum)
+            open_brace_pos = tokens.index('{', struct_or_enum_pos)
+        except ValueError:
+            return False
+        try:
+            _dummy = tokens.index(cursor.spelling, struct_or_enum_pos, open_brace_pos)
+            return False
+        except ValueError:
+            return True
+
     # (type, visibility)
     def _get_config_kind(self, cursor, file_path) -> tuple[str | None, str | None]:
         is_header = file_path.suffix in ['.h', '.hpp']
@@ -102,11 +125,14 @@ class NameConfig:
                 return ("function", "file")
             print(f"WARNING: Unexpected linkage {cursor.linkage} for {cursor.spelling}")
             return (None, None)
-        if cursor.kind == CursorKind.STRUCT_DECL:
+        # When unions/structs are behind typedefs we can't distinguish them anyway
+        if cursor.kind in (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL):
+            if self._is_struct_or_enum_unnamed('struct', cursor):
+                return (None, None)
             return ("struct_tag", "global" if is_header else "file")
         if cursor.kind == CursorKind.ENUM_DECL:
-            print(cursor.spelling)
-            print(f"\"{cursor.type.get_declaration().displayname}\"")
+            if self._is_struct_or_enum_unnamed('enum', cursor):
+                return (None, None)
             return ("enum_tag", "global" if is_header else "file")
         if cursor.kind == CursorKind.TYPEDEF_DECL:
             underlying_type = cursor.underlying_typedef_type.get_canonical()
@@ -212,7 +238,7 @@ def traverse(cursor, containing_type = None):
 
 
 idx = clang.cindex.Index.create()
-tu = idx.parse("StepperMotor/StepperMotorDriver.h")
+tu = idx.parse("Test.h")
 root = tu.cursor
 traverse(root)
 

@@ -189,7 +189,8 @@ class Processor:
             'filename:stem': re.escape(file_path.stem),
             'case:camel': '[a-z][a-zA-Z0-9]*',
             'case:pascal': '[A-Z][a-zA-Z0-9]*',
-            'case:upper': '[A-Z]([A-Z_]*[A-Z])?'
+            'case:snake': '[a-z]([a-z0-9_]*[a-z0-9])?',
+            'case:upper-snake': '[A-Z]([A-Z0-9_]*[A-Z0-9])?',
         }
 
         qualifiers = []

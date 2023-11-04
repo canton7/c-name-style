@@ -1,14 +1,12 @@
 from dataclasses import dataclass
 import clang.cindex
-from clang.cindex import Config, CursorKind, StorageClass, conf, TypeKind, LinkageKind
+from clang.cindex import Config, CursorKind, conf, TypeKind, LinkageKind
 from configparser import ConfigParser
 import re
 from pathlib import Path
 from string import Template
-
-config = ConfigParser()
-if len(config.read("config.ini")) != 1:
-    raise Exception("Unable to open config file")
+from argparse import ArgumentParser
+import sys
 
 class MyTemplate(Template):
     braceidpattern = r'(?a:[_a-z][_a-z0-9\-:]*)'
@@ -19,7 +17,7 @@ class ConfigRule:
     # Name of kind (e.g. variable) -> set of qualifiers (e.g. [static])
     kinds: dict[str, set[str] | None]
     visibility: list[str] | None
-    type: list[str] | None
+    types: list[str] | None
     parent_match: str | None
     prefix: str | None
     suffix: str | None
@@ -72,17 +70,17 @@ class RuleSet:
                 name=section_name,
                 kinds=kinds,
                 visibility=visibility,
-                type=variable_types,
+                types=variable_types,
                 parent_match=parent_match,
                 prefix=prefix,
                 suffix=suffix,
                 rule=rule))
 
 class Processor:
-    def __init__(self, rule_set: RuleSet) -> None:
+    def __init__(self, rule_set: RuleSet, verbosity: int) -> None:
         self._rule_set = rule_set
-        self._prefixes = []
-        self._suffixes = []
+        self._verbosity = verbosity
+        self._has_failures = False
 
     def _is_struct_or_enum_unnamed(self, struct_or_enum, cursor) -> bool:
         # If a struct/enum is unnamed, clang takes the typedef name as the name.
@@ -171,14 +169,16 @@ class Processor:
 
     def _process_node(self, cursor):
         if not conf.lib.clang_Location_isFromMainFile(cursor.location):
-            return
+            return True
         
         file_path = Path(cursor.location.file.name)
+        location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
+        name = cursor.spelling
 
         config_kind, visibility = self._get_config_kind(cursor, file_path)
-        # print(f"{cursor.spelling} {config_kind} {visibility}")
+
         if config_kind is None:
-            return
+            return True
         
         substitute_vars = {
             'filename:stem': re.escape(file_path.stem),
@@ -187,51 +187,44 @@ class Processor:
             'case:upper': '[A-Z]([A-Z_]*[A-Z])?'
         }
 
+        qualifiers = []
+        if cursor.kind in [CursorKind.VAR_DECL, CursorKind.PARM_DECL, CursorKind.FIELD_DECL] and cursor.type.kind == TypeKind.POINTER:
+            qualifiers.append("pointer")
+            pointer_level = 1
+            t = cursor.type.get_pointee()
+            while t.kind == TypeKind.POINTER:
+                pointer_level += 1
+                t = t.get_pointee()
+            substitute_vars['pointer-level'] = str(pointer_level)
+
+        if self._verbosity > 0:
+            print(f"{location} - Name: '{name}'; kind: {config_kind}; visibility: {visibility}; " +
+                  f"qualifiers: '{', '.join(qualifiers)}'; type: '{cursor.type.spelling}'")
+
         prefix_rules: list[ConfigRule] = []
         suffix_rules: list[ConfigRule] = []
         rule_to_apply = None
         for rule in self._rule_set.rules:
             if config_kind not in rule.kinds:
+                if self._verbosity > 2:
+                    print(f"  Skip rule '{rule.name}': kind '{config_kind}' not in '{', '.join(rule.kinds.keys())}'")
                 continue
 
-            if rule.type is not None and not any(re.fullmatch(x, cursor.type.spelling) for x in rule.type):
+            if rule.types is not None and not any(re.fullmatch(x, cursor.type.spelling) for x in rule.types):
+                if self._verbosity > 2:
+                    print(f"  Skip rule '{rule.name}': type '{cursor.type.spelling}' not in '{', '.join(rule.types)}'")
                 continue
 
             rule_qualifiers = rule.kinds[config_kind]
-            if rule_qualifiers is not None:
-                qualifiers = []
-                if cursor.kind in [CursorKind.VAR_DECL, CursorKind.PARM_DECL, CursorKind.FIELD_DECL] and cursor.type.kind == TypeKind.POINTER:
-                    qualifiers.append("pointer")
-                    pointer_level = 1
-                    t = cursor.type.get_pointee()
-                    while t.kind == TypeKind.POINTER:
-                        pointer_level += 1
-                        t = t.get_pointee()
-                    substitute_vars['pointer-level'] = str(pointer_level)
-                
-                if not any(x in rule_qualifiers for x in qualifiers):
-                    continue
-
-            if visibility is not None and rule.visibility is not None and visibility not in rule.visibility:
+            if rule_qualifiers is not None and not any(x in rule_qualifiers for x in qualifiers):
+                if self._verbosity > 2:
+                    print(f"  Skip rule '{rule.name}': qualifiers '{', '.join(qualifiers)}' does not intersect '{', '.join(rule_qualifiers)}'")
                 continue
 
-            if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
-                parent_name = cursor.semantic_parent.spelling
-                if rule.parent_match is not None:
-                    match = re.fullmatch(rule.parent_match, parent_name)
-                    if match is None:
-                        print(f"WARNING: Rule '{rule.name}' parent_match '{rule.parent_match}' does not match parent '{parent_name}'")
-                    else:
-                        try:
-                            parent_name = match.group('name')
-                        except IndexError:
-                            print(f"WARNING: Rule '{rule.name}' parent_match '{rule.parent_match}' does not have a capture group called 'name'")
-                substitute_vars["parent"] = re.escape(parent_name)
-                substitute_vars["parent:upper"] = re.escape(re.sub(r'(?<!^)(?=[A-Z])', '_', parent_name).upper())
-                
-            name = cursor.spelling
-            name_without_prefix_suffix = name
-            location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
+            if visibility is not None and rule.visibility is not None and visibility not in rule.visibility:
+                if self._verbosity > 2:
+                    print(f"  Skip rule '{rule.name}': visibility '{visibility}' not in '{', '.join(rule.visibility)}'")
+                continue
 
             if rule.prefix is not None:
                 prefix_rules.append(rule)
@@ -244,23 +237,42 @@ class Processor:
 
         expanded_prefix = None
         expanded_suffix = None
-        
+        name_without_prefix_suffix = name
+
         if len(prefix_rules) > 0:
             expanded_prefix = MyTemplate("".join(x.prefix for x in prefix_rules)).substitute(substitute_vars)
             if not name.startswith(expanded_prefix):
                 print(f"{location} - Name '{name}' is missing required prefix '{expanded_prefix}' from [{', '.join(x.name for x in prefix_rules)}]")
-                return
+                return False
             name_without_prefix_suffix = name_without_prefix_suffix[len(expanded_prefix):]
 
         if len(suffix_rules) > 0:
             expanded_suffix = MyTemplate("".join(x.suffix for x in suffix_rules)).substitute(substitute_vars)
             if not name.startswith(expanded_suffix):
                 print(f"{location} - Name '{name}' is missing required suffix '{expanded_suffix}' from [{', '.join(x.name for x in suffix_rules)}]")
-                return
+                return False
             name_without_prefix_suffix = name_without_prefix_suffix[:-len(expanded_suffix)]
-            
+
         if rule_to_apply is not None:
+            if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
+                parent_name = cursor.semantic_parent.spelling
+                if rule_to_apply.parent_match is not None:
+                    match = re.fullmatch(rule.parent_match, parent_name)
+                    if match is None:
+                        print(f"WARNING: Rule '{rule_to_apply.name}' parent_match '{rule_to_apply.parent_match}' does not match parent '{parent_name}'")
+                    else:
+                        try:
+                            parent_name = match.group('name')
+                        except IndexError:
+                            print(f"WARNING: Rule '{rule_to_apply.name}' parent_match '{rule_to_apply.parent_match}' does not have a capture group called 'name'")
+                substitute_vars["parent"] = re.escape(parent_name)
+                substitute_vars["parent:upper"] = re.escape(re.sub(r'(?<!^)(?=[A-Z])', '_', parent_name).upper())
+                
             rule_regex = MyTemplate(rule_to_apply.rule).substitute(substitute_vars)
+            if self._verbosity > 1:
+                print(f"  Testing rule '{rule_to_apply.name}. Rule: '{rule_to_apply.rule}'; expanded: '{rule_regex}'; stripped name: '{name_without_prefix_suffix}'; vars:")
+                for k, v in substitute_vars.items():
+                    print(f"   - {k}: {v}")
             if re.fullmatch(rule_regex, name_without_prefix_suffix) is None:
                 rule_name = f"'{rule_to_apply.name} ({rule_regex}"
                 parts = []
@@ -272,30 +284,45 @@ class Processor:
                     rule_name += " with " + ", ".join(parts)
                 rule_name += ")"
                 print(f"{location} - Name '{name}' fails rule {rule_name}")
+                return False
+            
+        return True
+    
+    def process(self, cursor) -> bool:
+        self._process(cursor)
+        return not self._has_failures
 
-    def process(self, cursor) -> None:
-        self._process_node(cursor)
+    def _process(self, cursor) -> None:
+        passed = self._process_node(cursor)
+        if not passed:
+            self._has_failures = True
 
         # Don't recurse into typedefs for enums and structs, as that's a duplicate of recursing into the typedef'd type
         # (which means we'll visit all struct/enum members twice)
         if cursor.kind != CursorKind.TYPEDEF_DECL or cursor.underlying_typedef_type.get_canonical().kind not in [TypeKind.RECORD, TypeKind.ENUM]:
             for child in cursor.get_children():
-                self.process(child)
+                self._process(child)
 
-        
+if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("filename", help="Path to the file to process")
+    parser.add_argument("-c", "--config", required=True, help="Path to the configuration file")
+    parser.add_argument("--libclang", help="Path to libclang.dll, if it isn't in your PATH")
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="Print debug messages (specify multiple times for more verbosity)")
+    args = parser.parse_args()
 
-rule_set = RuleSet(config)
-processor = Processor(rule_set)
+    if args.libclang:
+        Config.set_library_file(args.libclang)
 
-Config.set_library_file(r"C:\Program Files\LLVM\bin\libclang.dll")
-
-idx = clang.cindex.Index.create()
-tu = idx.parse("Test.c")
-root = tu.cursor
-processor.process(tu.cursor)
-
-
-# for x in tu.cursor.get_tokens():
-#     print(x.kind)
-#     print("  '" + str(x.spelling) + "'")
+    config = ConfigParser()
+    if len(config.read(args.config)) != 1:
+        raise Exception(f"Unable to open config file '{args.config}'")
+    
+    processor = Processor(RuleSet(config), args.verbose)
+    idx = clang.cindex.Index.create()
+    tu = idx.parse(args.filename)
+    root = tu.cursor
+    passed = processor.process(tu.cursor)
+    if not passed:
+        sys.exit(1)
     

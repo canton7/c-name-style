@@ -149,6 +149,9 @@ class Processor:
             return ("enum_tag", global_or_file)
         if cursor.kind == CursorKind.TYPEDEF_DECL:
             underlying_type = cursor.underlying_typedef_type.get_canonical()
+            # Unwrap any pointers
+            while underlying_type.kind == TypeKind.POINTER:
+                underlying_type = underlying_type.get_pointee()
             if underlying_type.kind == TypeKind.RECORD:
                 # I don't think cindex exposes a way to tell the difference...
                 if underlying_type.spelling.startswith("union "):
@@ -156,10 +159,9 @@ class Processor:
                 return ("struct_typedef", global_or_file)
             if underlying_type.kind == TypeKind.ENUM:
                 return ("enum_typedef", global_or_file)
-            if underlying_type.kind == TypeKind.POINTER:
-                if underlying_type.get_pointee().kind == TypeKind.FUNCTIONPROTO:
-                    return ("function_pointer_typedef", global_or_file)
-            return (None, None)
+            if underlying_type.kind == TypeKind.FUNCTIONPROTO:
+                return ("function_typedef", global_or_file)
+            return ("scalar_typedef", global_or_file)
         if cursor.kind == CursorKind.FIELD_DECL:
             # I don't think cindex exposes a way to tell the difference...
             if cursor.semantic_parent.type.spelling.startswith("union "):
@@ -191,10 +193,12 @@ class Processor:
         }
 
         qualifiers = []
-        if cursor.kind in [CursorKind.VAR_DECL, CursorKind.PARM_DECL, CursorKind.FIELD_DECL] and cursor.type.kind == TypeKind.POINTER:
+        # If it's a typedef, qualify it as 'pointer' if it typedef's a pointer
+        pointer_type = cursor.underlying_typedef_type.get_canonical() if cursor.kind == CursorKind.TYPEDEF_DECL else cursor.type
+        if pointer_type.kind == TypeKind.POINTER:
             qualifiers.append("pointer")
             pointer_level = 1
-            t = cursor.type.get_pointee()
+            t = pointer_type.get_pointee()
             while t.kind == TypeKind.POINTER:
                 pointer_level += 1
                 t = t.get_pointee()

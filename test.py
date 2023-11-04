@@ -21,20 +21,13 @@ class ConfigRule:
     visibility: list[str] | None
     type: list[str] | None
     parent_match: str | None
+    prefix: str | None
+    suffix: str | None
     rule: str
     
-class NameConfig:
-    # _TYPE_LOOKUP = {
-    #     CursorKind.VAR_DECL: "variable",
-    #     CursorKind.PARM_DECL: "parameter",
-    #     CursorKind.FUNCTION_DECL: "function",
-    # }
-    # _STORAGE_LOOKUP = {
-    #     StorageClass.STATIC: "static"
-    # }
-
+class RuleSet:
     def __init__(self, config: ConfigParser):
-        self._rules = []
+        self.rules = []
 
         for section_name in config.sections():
             section = config[section_name]
@@ -63,21 +56,33 @@ class NameConfig:
                 variable_types = [x.strip() for x in variable_types.split(',')]
 
             parent_match = section.get("parent_match")
+            prefix = section.get("prefix")
+            suffix = section.get("suffix")
 
             rule = section.get("rule")
-            if rule is None:
+            # It's OK for there to be no rule if there's a prefix or suffix
+            if rule is None and prefix is None and suffix is None:
                 raise Exception(f"Section {section_name} does not have a 'rule' member")
             
             visibility = section.get("visibility")
             if visibility is not None:
                 visibility = [x.strip() for x in visibility.split(',')]
 
-            self._rules.append(ConfigRule(name=section_name, kinds=kinds, visibility=visibility, type=variable_types, parent_match=parent_match, rule=rule))
+            self.rules.append(ConfigRule(
+                name=section_name,
+                kinds=kinds,
+                visibility=visibility,
+                type=variable_types,
+                parent_match=parent_match,
+                prefix=prefix,
+                suffix=suffix,
+                rule=rule))
 
-    # def _get_name(self, cursor):
-    #     if cursor.kind == CursorKind.FUNCTION_DECL:
-    #         return cursor.spelling
-    #     return cursor.displayname
+class Processor:
+    def __init__(self, rule_set: RuleSet) -> None:
+        self._rule_set = rule_set
+        self._prefixes = []
+        self._suffixes = []
 
     def _is_struct_or_enum_unnamed(self, struct_or_enum, cursor) -> bool:
         # If a struct/enum is unnamed, clang takes the typedef name as the name.
@@ -162,8 +167,9 @@ class NameConfig:
         if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
             return ("enum_member", global_or_file)
         return (None, None)
+    
 
-    def process(self, cursor):
+    def _process_node(self, cursor):
         if not conf.lib.clang_Location_isFromMainFile(cursor.location):
             return
         
@@ -181,7 +187,10 @@ class NameConfig:
             'case:upper': '[A-Z]([A-Z_]*[A-Z])?'
         }
 
-        for rule in self._rules:
+        prefix_rules: list[ConfigRule] = []
+        suffix_rules: list[ConfigRule] = []
+        rule_to_apply = None
+        for rule in self._rule_set.rules:
             if config_kind not in rule.kinds:
                 continue
 
@@ -221,56 +230,69 @@ class NameConfig:
                 substitute_vars["parent:upper"] = re.escape(re.sub(r'(?<!^)(?=[A-Z])', '_', parent_name).upper())
                 
             name = cursor.spelling
+            name_without_prefix_suffix = name
+            location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
 
-            rule_regex = MyTemplate(rule.rule).substitute(substitute_vars)
-            if re.fullmatch(rule_regex, name) is None:
-                print(f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column} - Name '{name}' fails rule '{rule.name}' ({rule_regex})")
-            break
+            if rule.prefix is not None:
+                prefix_rules.append(rule)
+            if rule.suffix is not None:
+                suffix_rules.append(rule)
 
+            if rule.rule is not None:
+                rule_to_apply = rule
+                break
+
+        expanded_prefix = None
+        expanded_suffix = None
+        
+        if len(prefix_rules) > 0:
+            expanded_prefix = MyTemplate("".join(x.prefix for x in prefix_rules)).substitute(substitute_vars)
+            if not name.startswith(expanded_prefix):
+                print(f"{location} - Name '{name}' is missing required prefix '{expanded_prefix}' from [{', '.join(x.name for x in prefix_rules)}]")
+                return
+            name_without_prefix_suffix = name_without_prefix_suffix[len(expanded_prefix):]
+
+        if len(suffix_rules) > 0:
+            expanded_suffix = MyTemplate("".join(x.suffix for x in suffix_rules)).substitute(substitute_vars)
+            if not name.startswith(expanded_suffix):
+                print(f"{location} - Name '{name}' is missing required suffix '{expanded_suffix}' from [{', '.join(x.name for x in suffix_rules)}]")
+                return
+            name_without_prefix_suffix = name_without_prefix_suffix[:-len(expanded_suffix)]
             
+        if rule_to_apply is not None:
+            rule_regex = MyTemplate(rule_to_apply.rule).substitute(substitute_vars)
+            if re.fullmatch(rule_regex, name_without_prefix_suffix) is None:
+                rule_name = f"'{rule_to_apply.name} ({rule_regex}"
+                parts = []
+                if expanded_prefix is not None:
+                    parts.append(f"prefix '{expanded_prefix}'")
+                if expanded_suffix is not None:
+                    parts.append(f"suffix '{expanded_suffix}'")
+                if len(parts) > 0:
+                    rule_name += " with " + ", ".join(parts)
+                rule_name += ")"
+                print(f"{location} - Name '{name}' fails rule {rule_name}")
 
+    def process(self, cursor) -> None:
+        self._process_node(cursor)
 
-c = NameConfig(config)
+        # Don't recurse into typedefs for enums and structs, as that's a duplicate of recursing into the typedef'd type
+        # (which means we'll visit all struct/enum members twice)
+        if cursor.kind != CursorKind.TYPEDEF_DECL or cursor.underlying_typedef_type.get_canonical().kind not in [TypeKind.RECORD, TypeKind.ENUM]:
+            for child in cursor.get_children():
+                self.process(child)
+
+        
+
+rule_set = RuleSet(config)
+processor = Processor(rule_set)
 
 Config.set_library_file(r"C:\Program Files\LLVM\bin\libclang.dll")
 
-def traverse(cursor):
-    c.process(cursor)
-
-    # Enums and structs can be typedef'd. If they are, we visit the decl first, and then the typedef.
-    # If an enum/struct is anonymous, we wait until we visit the typedef. Otherwise we visit it now, then don't recurse into the typedef.
-    # if cursor.kind in [CursorKind.ENUM_DECL, CursorKind.STRUCT_DECL]:
-    #     print(cursor.spelling)
-
-    # When we visit an enum/struct member, we want to remember the name of the containing typedef if any.
-    # Annoyingly we visit the enum decl before we visit its typedef, so we don't know ahead of time whether an enum is going to be
-    # typedef'd or not.
-
-    # Set containing_typedef when we enter a typedef. If we reach an enum decl and containing_typedef 
-    # if cursor.kind == CursorKind.TYPEDEF_DECL and cursor.underlying_typedef_type.get_canonical().kind == TypeKind.ENUM:
-    #     containing_type = cursor
-
-    # # If we visit a typedef for an enum, we want to remember the name of the containing type. 
-
-    # # Don't recurse into typedefs for enums and structs, as that's a duplicate of recursing into the typedef'd type
-    # # (which means we'll visit all struct/enum members twice)
-    if cursor.kind != CursorKind.TYPEDEF_DECL or cursor.underlying_typedef_type.get_canonical().kind not in [TypeKind.RECORD, TypeKind.ENUM]:
-        for child in cursor.get_children():
-            traverse(child)
-    # print('Found %s %s [file=%s, line=%s, col=%s]' % (cursor.kind, cursor.displayname, cursor.location.file, cursor.location.line, cursor.location.column))
-
-    # for child in cursor.get_children():
-    #     traverse(child)
-
-    # if node.kind == CursorKind.PARM_DECL:
-    #     print(f"{node.spelling} {node.type.kind}")
-
-
-
 idx = clang.cindex.Index.create()
-tu = idx.parse("Test.h")
+tu = idx.parse("Test.c")
 root = tu.cursor
-traverse(root)
+processor.process(tu.cursor)
 
 
 # for x in tu.cursor.get_tokens():

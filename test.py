@@ -161,6 +161,9 @@ class Processor:
                     return ("function_pointer_typedef", global_or_file)
             return (None, None)
         if cursor.kind == CursorKind.FIELD_DECL:
+            # I don't think cindex exposes a way to tell the difference...
+            if cursor.semantic_parent.type.spelling.startswith("union "):
+                return ("union_member", global_or_file)
             return ("struct_member", None)
         if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
             return ("enum_member", global_or_file)

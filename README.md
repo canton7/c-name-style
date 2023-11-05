@@ -69,7 +69,13 @@ If more than one value is given, only one value has to match for the filter to m
 | `function` | A function or function prototype |
 | `struct_tag`, `enum_tag`, `union_tag` | The tag given to a struct, enum or union |
 | `struct_typedef`, `enum_typedef`, `union_typedef`, `function_typedef`, `scalar_typedef` | The name given to a typedef of a struct, enum, union, function, or scalar |
-| `struct_member`, `enum_constant`, `union_member` | The name given to a member of a struct, enum or union |
+| `struct_member`, `union_member` | The name given to a member of a struct, enum or union |
+| `enum_constant` | The name given to an enum constant |
+
+You can also use the following shorthands:
+ - `tag`: `struct_tag`, `enum_tag` and `union_tag`
+ - `typedef`: `struct_typedef`, `enum_typedef`, `union_typedef`, `function_typedef` and `scalar_typedef`
+ - `member`: `struct_member` and `union_member`
 
 
 ### `visibility` filter

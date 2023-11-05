@@ -6,8 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 
-from clang.cindex import (Config, Cursor, CursorKind, Index,  # type: ignore
-                          LinkageKind, TypeKind, conf)
+from clang.cindex import Config, Cursor, CursorKind, Index, LinkageKind, TypeKind, conf  # type: ignore
 
 
 class SubstTemplate(Template):
@@ -36,7 +35,7 @@ class RuleSet:
             section = config[section_name]
 
             if section_name == "placeholders":
-                self.placeholders = { f"p:{k}": v for k, v in config.items(section_name) }
+                self.placeholders = {f"p:{k}": v for k, v in config.items(section_name)}
                 continue
 
             kinds = section.get("kind")
@@ -83,6 +82,12 @@ class RuleSet:
 
 
 class Processor:
+    _KIND_EXPANSION = {
+        "tag": ["struct_tag", "enum_tag", "union_tag"],
+        "typedef": ["struct_typedef", "enum_typedef", "union_typedef", "function_typedef", "scalar_typedef"],
+        "member": ["struct_member", "union_member"],
+    }
+
     def __init__(self, rule_set: RuleSet, verbosity: int) -> None:
         self._rule_set = rule_set
         self._verbosity = verbosity
@@ -232,7 +237,12 @@ class Processor:
         suffix_rules: list[Rule] = []
         rule_to_apply = None
         for rule in self._rule_set.rules:
-            if config_kind not in rule.kinds:
+            rule_kinds = rule.kinds
+            for rule_kind in rule_kinds:
+                if rule_kind in Processor._KIND_EXPANSION:
+                    rule_kinds.extend(Processor._KIND_EXPANSION[rule_kind])
+                    rule_kinds.remove(rule_kind)
+            if config_kind not in rule_kinds:
                 if self._verbosity > 2:
                     print(f"  Skip rule '{rule.name}': kind '{config_kind}' not in '{', '.join(rule.kinds)}'")
                 continue
@@ -290,7 +300,7 @@ class Processor:
             match = re.search(expanded_prefix, name_without_prefix_suffix)
             if match is None:
                 print(
-                    f"{location} - Name '{name}' is missing required prefix '{expanded_prefix}' from [{', '.join(x.name for x in prefix_rules)}]"
+                    f"{location} - Name '{name}' is missing prefix '{expanded_prefix}' from [{', '.join(x.name for x in prefix_rules)}]"
                 )
                 return False
             name_without_prefix_suffix = name_without_prefix_suffix[match.end() :]
@@ -300,7 +310,7 @@ class Processor:
             match = re.search(expanded_suffix, name_without_prefix_suffix)
             if match is None:
                 print(
-                    f"{location} - Name '{name}' is missing required suffix '{expanded_suffix}' from [{', '.join(x.name for x in suffix_rules)}]"
+                    f"{location} - Name '{name}' is missing suffix '{expanded_suffix}' from [{', '.join(x.name for x in suffix_rules)}]"
                 )
                 return False
             name_without_prefix_suffix = name_without_prefix_suffix[: match.start()]

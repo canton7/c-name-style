@@ -39,9 +39,25 @@ Once it finds a rule which matches, it tests the `rule` regex to see whether it 
 Once it finds a rule which matches it stops, so the order of rules matters!
 
 
+### `rule`
+
+The `rule` option specifies a regex which must match the name of a symbol which has been matched by the filters in that rule (see below).
+The regex is anchored to the start and end of the name, so no need to specify `$` or `^`.
+
+Within the `rule`, various placeholders are available:
+ - `${filename}`: The name of the file being processed, without any directory names or file extension
+ - `${case:camel}`: A regex which matches `camel_case` variable names
+ - `${case:pascal}`: A regex which matches `PascalCase` variable names
+ - `${case:snake}`: A regex which matches `snake_case` variable names
+ - `${case:upper-snake}`: A regex which matches `UPPER_SNAKE` variable names
+ - `${pointer-level}`: See [Pointers](#pointers)
+ - `${parent}`, `${parent:upper-snake}`: See [Enums](#enums)
+
+
 ### `kind` filter
 
-The `kind` filter is a comma-separated list, with the following possible values.
+The `kind` filter matches on the type of symbol being inspected.
+It is a comma-separated list, with the following possible values.
 If more than one value is given, only one value has to match for the filter to match.
 
 | Value | Description |
@@ -51,7 +67,8 @@ If more than one value is given, only one value has to match for the filter to m
 | `function` | A function or function prototype |
 | `struct_tag`, `enum_tag`, `union_tag` | The tag given to a struct, enum or union |
 | `struct_typedef`, `enum_typedef`, `union_typedef`, `function_typedef`, `scalar_typedef` | The name given to a typedef of a struct, enum, union, function, or scalar |
-| `struct_member`, `enum_member`, `union_member` | The name given to a member of a struct, enum or union |
+| `struct_member`, `enum_constant`, `union_member` | The name given to a member of a struct, enum or union |
+
 
 ### `visibility` filter
 
@@ -69,12 +86,13 @@ The sorts of visibility applicable to different `kinds` are given [below](#compa
 
 By default, the `kind` values which support pointers (see [Compatibility](#compatibility)) will match pointer and non-pointer types, e.g. `kind = variable` will match both `int foo` and `int* foo`.
 
-You can specify a `pointer` filter make a rule only match symbols which are pointers (or not!):
+You can specify a `pointer` filter make a rule only match symbols which are/aren't pointers:
   - `pointer = true`: Rule only matches pointers
   - `pointer = false`: Rule only matches non-pointers
   - `pointer = <n>` where `<n>` is an integer: Rule only matches pointers with a number of `*`'s equal to `<n>`
 
-Within a `rule`, the placeholder `${pointer-level}` will contain an integer specifying the pointer level, i.e. the number of `*`'s on the pointer. This lets you write rules such as:
+Within a `rule`, the placeholder `${pointer-level}` will contain an integer specifying the pointer level, i.e. the number of `*`'s on the pointer.
+This lets you write rules such as:
 
 ```ini
 [Local variable pointers must start with p]
@@ -85,6 +103,75 @@ rule = p{${pointer-level}}_${case:snake}
 ```
 
 For e.g. a double pointer `int**`, this `rule` will expand to `p{2}_[a-z]([a-z0-9_]*[a-z0-9])?`, enforcing that the variable starts with the letter `p` repeated once per pointer level.
+
+
+### Prefixes and suffixes
+
+Rules can specify a `prefix` and/or `suffix`, which specifies a regex which must be present at the start/end of any symbols which match the rule.
+
+Rules which do this do not need to specify a `rule`.
+If they don't, when rules are processed in top-to-bottom order, processing will not stop at that rule but will continue.
+The prefixes/suffixes from all matching rules are concatenated in order.
+
+For example:
+
+```ini
+[Global variables start with the file name]
+kind = variable
+visibility = global
+prefix = ${filename}_
+
+[Pointers must begin with p]
+kind = variable
+pointer = true
+prefix = p{${pointer-level}}
+
+[Global variables must be PascalCase]
+kind = variable
+visibility = global
+rule = ${case:pascal}
+```
+
+Taken in order, this means that:
+ - Non-pointer global variables must have the form `FileName_VariableName`
+ - Pointer global variables must have the form `FileName_pVariableName`
+
+
+## Enums
+
+Enum constants often need to start with the name of the enum, as a form of namespacing.
+This can be achieved with the `parent_match` option.
+
+`parent_match` must contain a regex which is matched against the enum name (the tag name if the enum has a tag, or else the typedef name if the enum is anonymous and is typedef'd).
+It must contain a capture group called `name`.
+
+If the enum is anonymous, rules which specify `parent_match` will not match.
+
+The value of the `name` capture group is then made available as a placeholder in the `rule`, as:
+  - `${parent}`: The actual value matched by the `parent_match` regex capture group
+  - `${parent:upper-snake}`: The same value converted to `UPPER_SNAKE_CASE`
+
+For example:
+
+```ini
+[Enum members must start with the enum name]
+kind = enum_constant
+parent_match = (?P<name>.*)_t
+rule = ${parent:upper-snake}_${case:upper-snake}
+```
+
+Given:
+
+```c
+typedef enum
+{
+    FOO_ONE,
+    FOO_TWO
+} Foo_t;
+```
+
+This will match on the parent name `Foo_t` and extract the `Foo` as a capture group named `name`.
+It then applies a rule that all enum constants must be of the form `FOO_${case:upper-snake}`, or `FOO_[A-Z]([A-Z0-9_]*[A-Z0-9])?`.
 
 
 ### `type` filter
@@ -100,7 +187,7 @@ The easiest thing to do is to run the script with `-v`, which will print the typ
 
 The relationship between `kind`, `visibility`, and pointers is given below.
 
-| `kind` | `visibility` | Supports `:pointer` |
+| `kind` | `visibility` | Supports `pointer` |
 |---     |---           | ---                 |
 | `parameter` | None | Yes |
 | `variable` | `global`, `file`, `local` | Yes |
@@ -108,4 +195,4 @@ The relationship between `kind`, `visibility`, and pointers is given below.
 | `struct_tag`, `enum_tag`, `union_tag` | `global`, `file` | No |
 | `struct_typedef`, `enum_typedef`, `union_typedef`, `function_typedef`, `scalar_typedef` | `global`, `file` | Yes |
 | `struct_member`, `union_member` | None | Yes |
-| `enum_member` | `global`, `file` | No |
+| `enum_constant` | `global`, `file` | No |

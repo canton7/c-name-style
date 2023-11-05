@@ -161,7 +161,7 @@ class Processor:
                 return ("union_member", global_or_file)
             return ("struct_member", None)
         if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
-            return ("enum_member", global_or_file)
+            return ("enum_constant", global_or_file)
         return (None, None)
     
 
@@ -188,7 +188,7 @@ class Processor:
                 pointer_type = pointer_type.get_pointee()
         
         substitute_vars = {
-            'filename:stem': re.escape(file_path.stem),
+            'filename': re.escape(file_path.stem),
             'case:camel': '[a-z][a-zA-Z0-9]*',
             'case:pascal': '[A-Z][a-zA-Z0-9]*',
             'case:snake': '[a-z]([a-z0-9_]*[a-z0-9])?',
@@ -223,6 +223,11 @@ class Processor:
             if visibility is not None and rule.visibility is not None and visibility not in rule.visibility:
                 if self._verbosity > 2:
                     print(f"  Skip rule '{rule.name}': visibility '{visibility}' not in '{', '.join(rule.visibility)}'")
+                continue
+
+            if rule.parent_match is not None and cursor.kind == CursorKind.ENUM_CONSTANT_DECL and cursor.semantic_parent.is_anonymous():
+                if self._verbosity > 2:
+                    print(f"  Skip rule '{rule.name}: parent_match specified but enum is anonymous")
                 continue
 
             if rule.prefix is not None:
@@ -262,6 +267,8 @@ class Processor:
             if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
                 parent_name = cursor.semantic_parent.spelling
                 if rule_to_apply.parent_match is not None:
+                    # We checked earlier that the enum isn't anonymous if the rule has parent_match
+                    assert not cursor.semantic_parent.is_anonymous()
                     match = re.fullmatch(rule.parent_match, parent_name)
                     if match is None:
                         print(f"WARNING: Rule '{rule_to_apply.name}' parent_match '{rule_to_apply.parent_match}' does not match parent '{parent_name}'")
@@ -271,7 +278,7 @@ class Processor:
                         except IndexError:
                             print(f"WARNING: Rule '{rule_to_apply.name}' parent_match '{rule_to_apply.parent_match}' does not have a capture group called 'name'")
                 substitute_vars["parent"] = re.escape(parent_name)
-                substitute_vars["parent:upper"] = re.escape(re.sub(r'(?<!^)(?=[A-Z])', '_', parent_name).upper())
+                substitute_vars["parent:upper-snake"] = re.escape(re.sub(r'(?<!^)(?=[A-Z])', '_', parent_name).upper())
                 
             rule_regex = MyTemplate(rule_to_apply.rule).substitute(substitute_vars)
             if self._verbosity > 1:

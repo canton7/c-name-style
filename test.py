@@ -14,10 +14,10 @@ class MyTemplate(Template):
 @dataclass
 class ConfigRule:
     name: str
-    # Name of kind (e.g. variable) -> set of qualifiers (e.g. [static])
-    kinds: dict[str, set[str] | None]
+    kinds: list[str]
     visibility: list[str] | None
     types: list[str] | None
+    pointer: int | bool | None
     parent_match: str | None
     prefix: str | None
     suffix: str | None
@@ -30,28 +30,24 @@ class RuleSet:
         for section_name in config.sections():
             section = config[section_name]
 
-            section_kinds = section.get("kind")
-            if section_kinds is None:
+            kinds = section.get("kind")
+            if kinds is None:
                 raise Exception(f"Section '{section_name}' does not have a 'kind' member")
-            
-            kinds = {}
-            for section_kind in section_kinds.split(', '):
-                section_kind = section_kind.strip()
-                parts = section_kind.split(':', maxsplit=1)
-                kind = parts[0]
-                qualifier = parts[1] if len(parts) > 1 else None
-                if kind in kinds:
-                    if (qualifier is None) != (kinds[kind] is not None):
-                        extra_qualifier = qualifier if qualifier is not None else kinds[kind]
-                        raise Exception(f"Section '{section_name}': kind '{kind}:{extra_qualifier}' is redundant")
-                    if kinds[kind] is not None:
-                        kinds[kind].add(qualifier)
-                else:
-                    kinds[kind] = (None if qualifier is None else {qualifier})#
+            kinds = [x.strip() for x in kinds.split(',')]
 
             variable_types = section.get("type")
             if variable_types is not None:
                 variable_types = [x.strip() for x in variable_types.split(',')]
+
+            visibility = section.get("visibility")
+            if visibility is not None:
+                visibility = [x.strip() for x in visibility.split(',')]
+
+            # getboolean parses '1' as true
+            try:
+                pointer = section.getint("pointer")
+            except ValueError:
+                pointer = section.getboolean("pointer")
 
             parent_match = section.get("parent_match")
             prefix = section.get("prefix")
@@ -61,16 +57,13 @@ class RuleSet:
             # It's OK for there to be no rule if there's a prefix or suffix
             if rule is None and prefix is None and suffix is None:
                 raise Exception(f"Section {section_name} does not have a 'rule' member")
-            
-            visibility = section.get("visibility")
-            if visibility is not None:
-                visibility = [x.strip() for x in visibility.split(',')]
 
             self.rules.append(ConfigRule(
                 name=section_name,
                 kinds=kinds,
                 visibility=visibility,
                 types=variable_types,
+                pointer=pointer,
                 parent_match=parent_match,
                 prefix=prefix,
                 suffix=suffix,
@@ -185,29 +178,27 @@ class Processor:
         if config_kind is None:
             return True
         
+        pointer_level = None
+        if cursor.kind in [CursorKind.VAR_DECL, CursorKind.PARM_DECL, CursorKind.TYPEDEF_DECL, CursorKind.FIELD_DECL]:
+            pointer_level = 0
+            # If it's a typedef, qualify it as 'pointer' if it typedef's a pointer
+            pointer_type = cursor.underlying_typedef_type.get_canonical() if cursor.kind == CursorKind.TYPEDEF_DECL else cursor.type
+            while pointer_type.kind == TypeKind.POINTER:
+                pointer_level += 1
+                pointer_type = pointer_type.get_pointee()
+        
         substitute_vars = {
             'filename:stem': re.escape(file_path.stem),
             'case:camel': '[a-z][a-zA-Z0-9]*',
             'case:pascal': '[A-Z][a-zA-Z0-9]*',
             'case:snake': '[a-z]([a-z0-9_]*[a-z0-9])?',
             'case:upper-snake': '[A-Z]([A-Z0-9_]*[A-Z0-9])?',
+            'pointer-level': str(pointer_level),
         }
-
-        qualifiers = []
-        # If it's a typedef, qualify it as 'pointer' if it typedef's a pointer
-        pointer_type = cursor.underlying_typedef_type.get_canonical() if cursor.kind == CursorKind.TYPEDEF_DECL else cursor.type
-        if pointer_type.kind == TypeKind.POINTER:
-            qualifiers.append("pointer")
-            pointer_level = 1
-            t = pointer_type.get_pointee()
-            while t.kind == TypeKind.POINTER:
-                pointer_level += 1
-                t = t.get_pointee()
-            substitute_vars['pointer-level'] = str(pointer_level)
 
         if self._verbosity > 0:
             print(f"{location} - Name: '{name}'; kind: {config_kind}; visibility: {visibility}; " +
-                  f"qualifiers: '{', '.join(qualifiers)}'; type: '{cursor.type.spelling}'")
+                  f"pointer: {pointer_level}; type: '{cursor.type.spelling}'")
 
         prefix_rules: list[ConfigRule] = []
         suffix_rules: list[ConfigRule] = []
@@ -215,18 +206,18 @@ class Processor:
         for rule in self._rule_set.rules:
             if config_kind not in rule.kinds:
                 if self._verbosity > 2:
-                    print(f"  Skip rule '{rule.name}': kind '{config_kind}' not in '{', '.join(rule.kinds.keys())}'")
+                    print(f"  Skip rule '{rule.name}': kind '{config_kind}' not in '{', '.join(rule.kinds)}'")
+                continue
+
+            if pointer_level is not None and rule.pointer is not None and \
+                    not ((isinstance(rule.pointer, bool) and rule.pointer == (pointer_level > 0)) or (rule.pointer == pointer_level)):
+                if self._verbosity > 2:
+                    print(f"  Skip rule '{rule.name}': pointer level '{pointer_level}' does not match '{rule.pointer}'")
                 continue
 
             if rule.types is not None and not any(re.fullmatch(x, cursor.type.spelling) for x in rule.types):
                 if self._verbosity > 2:
                     print(f"  Skip rule '{rule.name}': type '{cursor.type.spelling}' not in '{', '.join(rule.types)}'")
-                continue
-
-            rule_qualifiers = rule.kinds[config_kind]
-            if rule_qualifiers is not None and not any(x in rule_qualifiers for x in qualifiers):
-                if self._verbosity > 2:
-                    print(f"  Skip rule '{rule.name}': qualifiers '{', '.join(qualifiers)}' does not intersect '{', '.join(rule_qualifiers)}'")
                 continue
 
             if visibility is not None and rule.visibility is not None and visibility not in rule.visibility:
@@ -235,8 +226,12 @@ class Processor:
                 continue
 
             if rule.prefix is not None:
+                if self._verbosity > 1:
+                    print(f"  Prefix rule '{rule.name}'; prefix: '{rule.prefix}'")
                 prefix_rules.append(rule)
             if rule.suffix is not None:
+                if self._verbosity > 1:
+                    print(f"  Suffix rule '{rule.name}; suffix: '{rule.suffix}'")
                 suffix_rules.append(rule)
 
             if rule.rule is not None:
@@ -248,18 +243,20 @@ class Processor:
         name_without_prefix_suffix = name
 
         if len(prefix_rules) > 0:
-            expanded_prefix = MyTemplate("".join(x.prefix for x in prefix_rules)).substitute(substitute_vars)
-            if not name.startswith(expanded_prefix):
+            expanded_prefix = "^" + "".join(MyTemplate(x.prefix).substitute(substitute_vars) for x in prefix_rules)
+            match = re.search(expanded_prefix, name_without_prefix_suffix)
+            if match is None:
                 print(f"{location} - Name '{name}' is missing required prefix '{expanded_prefix}' from [{', '.join(x.name for x in prefix_rules)}]")
                 return False
-            name_without_prefix_suffix = name_without_prefix_suffix[len(expanded_prefix):]
+            name_without_prefix_suffix = name_without_prefix_suffix[match.end():]
 
         if len(suffix_rules) > 0:
-            expanded_suffix = MyTemplate("".join(x.suffix for x in suffix_rules)).substitute(substitute_vars)
-            if not name.startswith(expanded_suffix):
+            expanded_suffix = "".join(MyTemplate(x.suffix).substitute(substitute_vars) for x in suffix_rules) + "$"
+            match = re.search(expanded_suffix, name_without_prefix_suffix)
+            if match is None:
                 print(f"{location} - Name '{name}' is missing required suffix '{expanded_suffix}' from [{', '.join(x.name for x in suffix_rules)}]")
                 return False
-            name_without_prefix_suffix = name_without_prefix_suffix[:-len(expanded_suffix)]
+            name_without_prefix_suffix = name_without_prefix_suffix[:match.start()]
 
         if rule_to_apply is not None:
             if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:

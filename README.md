@@ -69,15 +69,18 @@ The sorts of visibility applicable to different `kinds` are given [below](#compa
 
 By default, the `kind` values which support pointers (see [Compatibility](#compatibility)) will match pointer and non-pointer types, e.g. `kind = variable` will match both `int foo` and `int* foo`.
 
-You can suffix the `kind` with `:pointer`, e.g. `kind = variable:pointer`, to match just pointers.
-This can be used to apply a different naming convention to pointers.
+You can specify a `pointer` filter make a rule only match symbols which are pointers (or not!):
+  - `pointer = true`: Rule only matches pointers
+  - `pointer = false`: Rule only matches non-pointers
+  - `pointer = <n>` where `<n>` is an integer: Rule only matches pointers with a number of `*`'s equal to `<n>`
 
 Within a `rule`, the placeholder `${pointer-level}` will contain an integer specifying the pointer level, i.e. the number of `*`'s on the pointer. This lets you write rules such as:
 
 ```ini
 [Local variable pointers must start with p]
-kind = variable:pointer
+kind = variable
 visibility = local
+pointer = true
 rule = p{${pointer-level}}_${case:snake}
 ```
 

@@ -30,9 +30,14 @@ class Rule:
 class RuleSet:
     def __init__(self, config: ConfigParser) -> None:
         self.rules: list[Rule] = []
+        self.placeholders: dict[str, str] = {}
 
         for section_name in config.sections():
             section = config[section_name]
+
+            if section_name == "placeholders":
+                self.placeholders = { f"p:{k}": v for k, v in config.items(section_name) }
+                continue
 
             kinds = section.get("kind")
             if kinds is None:
@@ -82,6 +87,14 @@ class Processor:
         self._rule_set = rule_set
         self._verbosity = verbosity
         self._has_failures = False
+
+    def _sub_placeholders(self, template: str, placeholders: dict[str, str]) -> str:
+        # Do the placeholders section first
+        result = template
+        if len(self._rule_set.placeholders) > 0:
+            result = SubstTemplate(result).safe_substitute(self._rule_set.placeholders)
+        result = SubstTemplate(result).safe_substitute(placeholders)
+        return result
 
     def _is_struct_or_enum_unnamed(self, struct_or_enum: str, cursor: Cursor) -> bool:
         # If a struct/enum is unnamed, clang takes the typedef name as the name.
@@ -273,7 +286,7 @@ class Processor:
         name_without_prefix_suffix = name
 
         if len(prefix_rules) > 0:
-            expanded_prefix = "^" + "".join(SubstTemplate(x.prefix).substitute(substitute_vars) for x in prefix_rules)  # type: ignore
+            expanded_prefix = "^" + "".join(self._sub_placeholders(x.prefix, substitute_vars) for x in prefix_rules)  # type: ignore
             match = re.search(expanded_prefix, name_without_prefix_suffix)
             if match is None:
                 print(
@@ -283,7 +296,7 @@ class Processor:
             name_without_prefix_suffix = name_without_prefix_suffix[match.end() :]
 
         if len(suffix_rules) > 0:
-            expanded_suffix = "".join(SubstTemplate(x.suffix).substitute(substitute_vars) for x in suffix_rules) + "$"  # type: ignore
+            expanded_suffix = "".join(self._sub_placeholders(x.suffix, substitute_vars) for x in suffix_rules) + "$"  # type: ignore
             match = re.search(expanded_suffix, name_without_prefix_suffix)
             if match is None:
                 print(
@@ -313,7 +326,7 @@ class Processor:
                 substitute_vars["parent"] = re.escape(parent_name)
                 substitute_vars["parent:upper-snake"] = re.escape(re.sub(r"(?<!^)(?=[A-Z])", "_", parent_name).upper())
 
-            rule_regex = SubstTemplate(rule_to_apply.rule).substitute(substitute_vars)
+            rule_regex = self._sub_placeholders(rule_to_apply.rule, substitute_vars)
             if self._verbosity > 1:
                 print(
                     f"  Testing rule '{rule_to_apply.name}. Rule: '{rule_to_apply.rule}'; expanded: '{rule_regex}'; stripped name: '{name_without_prefix_suffix}'; vars:"

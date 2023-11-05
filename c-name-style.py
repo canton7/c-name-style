@@ -16,7 +16,7 @@ class SubstTemplate(Template):
 @dataclass
 class Rule:
     name: str
-    kinds: list[str]
+    kinds: list[str] | None
     visibility: list[str] | None
     types: list[str] | None
     pointer: int | bool | None
@@ -39,9 +39,8 @@ class RuleSet:
                 continue
 
             kinds = section.get("kind")
-            if kinds is None:
-                raise Exception(f"Section '{section_name}' does not have a 'kind' member")
-            kinds = [x.strip() for x in kinds.split(",")]
+            if kinds is not None:
+                kinds = [x.strip() for x in kinds.split(",")]
 
             variable_types = section.get("type")
             if variable_types is not None:
@@ -101,7 +100,7 @@ class Processor:
         result = SubstTemplate(result).safe_substitute(placeholders)
         return result
 
-    def _is_struct_or_enum_unnamed(self, struct_or_enum: str, cursor: Cursor) -> bool:
+    def _is_struct_enum_union_unnamed(self, cursor: Cursor) -> bool:
         # If a struct/enum is unnamed, clang takes the typedef name as the name.
         # (The C API has methods to query this, but they're not exposed to Python)
         # Therefore we need to look at the tokens to figure out.
@@ -111,15 +110,22 @@ class Processor:
         # Look for 'struct/enum' and '{', with the thing that might be the tag name or might be the
         # typedef name in the middle. If we find the 'struct/enum' and '{' but not the name, it's
         # unnamed.
-        struct_or_enum = "struct" if cursor.kind == CursorKind.STRUCT_DECL else "enum"
+        if cursor.kind == CursorKind.ENUM_DECL:
+            t = "enum"
+        elif cursor.kind == CursorKind.STRUCT_DECL:
+            t = "struct"
+        elif cursor.kind == CursorKind.UNION_DECL:
+            t = "union"
+        else:
+            raise AssertionError()
         tokens = [x.spelling for x in cursor.get_tokens()]
         try:
-            struct_or_enum_pos = tokens.index(struct_or_enum)
-            open_brace_pos = tokens.index("{", struct_or_enum_pos)
+            type_pos = tokens.index(t)
+            open_brace_pos = tokens.index("{", type_pos)
         except ValueError:
             return False
         try:
-            _dummy = tokens.index(cursor.spelling, struct_or_enum_pos, open_brace_pos)
+            _dummy = tokens.index(cursor.spelling, type_pos, open_brace_pos)
             return False
         except ValueError:
             return True
@@ -157,15 +163,15 @@ class Processor:
             print(f"WARNING: Unexpected linkage {cursor.linkage} for {cursor.spelling}")
             return (None, None)
         if cursor.kind == CursorKind.STRUCT_DECL:
-            if self._is_struct_or_enum_unnamed("struct", cursor):
+            if self._is_struct_enum_union_unnamed(cursor):
                 return (None, None)
             return ("struct_tag", global_or_file)
         if cursor.kind == CursorKind.UNION_DECL:
-            if self._is_struct_or_enum_unnamed("union", cursor):
+            if self._is_struct_enum_union_unnamed(cursor):
                 return (None, None)
             return ("union_tag", global_or_file)
         if cursor.kind == CursorKind.ENUM_DECL:
-            if self._is_struct_or_enum_unnamed("enum", cursor):
+            if self._is_struct_enum_union_unnamed(cursor):
                 return (None, None)
             return ("enum_tag", global_or_file)
         if cursor.kind == CursorKind.TYPEDEF_DECL:
@@ -238,14 +244,15 @@ class Processor:
         rule_to_apply = None
         for rule in self._rule_set.rules:
             rule_kinds = rule.kinds
-            for rule_kind in rule_kinds:
-                if rule_kind in Processor._KIND_EXPANSION:
-                    rule_kinds.extend(Processor._KIND_EXPANSION[rule_kind])
-                    rule_kinds.remove(rule_kind)
-            if config_kind not in rule_kinds:
-                if self._verbosity > 2:
-                    print(f"  Skip rule '{rule.name}': kind '{config_kind}' not in '{', '.join(rule.kinds)}'")
-                continue
+            if rule_kinds is not None:
+                for rule_kind in rule_kinds:
+                    if rule_kind in Processor._KIND_EXPANSION:
+                        rule_kinds.extend(Processor._KIND_EXPANSION[rule_kind])
+                        rule_kinds.remove(rule_kind)
+                if config_kind not in rule_kinds:
+                    if self._verbosity > 2:
+                        print(f"  Skip rule '{rule.name}': kind '{config_kind}' not in '{', '.join(rule.kinds)}'")
+                    continue
 
             if (
                 pointer_level is not None
@@ -294,26 +301,29 @@ class Processor:
         expanded_prefix = None
         expanded_suffix = None
         name_without_prefix_suffix = name
+        success = True
 
         if len(prefix_rules) > 0:
-            expanded_prefix = "^" + "".join(self._sub_placeholders(x.prefix, substitute_vars) for x in prefix_rules)  # type: ignore
-            match = re.search(expanded_prefix, name_without_prefix_suffix)
+            expanded_prefix = "".join(self._sub_placeholders(x.prefix, substitute_vars) for x in prefix_rules)  # type: ignore
+            match = re.search("^" + expanded_prefix, name_without_prefix_suffix)
             if match is None:
                 print(
                     f"{location} - Name '{name}' is missing prefix '{expanded_prefix}' from [{', '.join(x.name for x in prefix_rules)}]"
                 )
-                return False
-            name_without_prefix_suffix = name_without_prefix_suffix[match.end() :]
+                success = False
+            else:
+                name_without_prefix_suffix = name_without_prefix_suffix[match.end() :]
 
         if len(suffix_rules) > 0:
-            expanded_suffix = "".join(self._sub_placeholders(x.suffix, substitute_vars) for x in suffix_rules) + "$"  # type: ignore
-            match = re.search(expanded_suffix, name_without_prefix_suffix)
+            expanded_suffix = "".join(self._sub_placeholders(x.suffix, substitute_vars) for x in suffix_rules)  # type: ignore
+            match = re.search(expanded_suffix + "$", name_without_prefix_suffix)
             if match is None:
                 print(
                     f"{location} - Name '{name}' is missing suffix '{expanded_suffix}' from [{', '.join(x.name for x in suffix_rules)}]"
                 )
-                return False
-            name_without_prefix_suffix = name_without_prefix_suffix[: match.start()]
+                success = False
+            else:
+                name_without_prefix_suffix = name_without_prefix_suffix[: match.start()]
 
         if rule_to_apply is not None:
             if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
@@ -324,7 +334,7 @@ class Processor:
                     match = re.fullmatch(rule_to_apply.parent_match, parent_name)
                     if match is None:
                         print(
-                            f"WARNING: Rule '{rule_to_apply.name}' parent_match '{rule_to_apply.parent_match}' does not match parent '{parent_name}'"
+                            f"{location} - WARNING: Rule '{rule_to_apply.name}' parent_match '{rule_to_apply.parent_match}' does not match parent '{parent_name}'"
                         )
                     else:
                         try:
@@ -344,7 +354,7 @@ class Processor:
                 for k, v in substitute_vars.items():
                     print(f"   - {k}: {v}")
             if re.fullmatch(rule_regex, name_without_prefix_suffix) is None:
-                rule_name = f"'{rule_to_apply.name} ({rule_regex}"
+                rule_name = f"'{rule_to_apply.name} ('{rule_regex}'"
                 parts = []
                 if expanded_prefix is not None:
                     parts.append(f"prefix '{expanded_prefix}'")
@@ -354,9 +364,9 @@ class Processor:
                     rule_name += " with " + ", ".join(parts)
                 rule_name += ")"
                 print(f"{location} - Name '{name}' fails rule {rule_name}")
-                return False
+                success = False
 
-        return True
+        return success
 
     def process(self, cursor: Cursor) -> bool:
         self._process(cursor)

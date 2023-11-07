@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 
-from clang.cindex import Config, Cursor, CursorKind, Index, LinkageKind, TypeKind, conf  # type: ignore
+from clang.cindex import Config, Cursor, CursorKind, Index, LinkageKind, TokenKind, TypeKind, Token, TranslationUnit, conf  # type: ignore
 
 
 class SubstTemplate(Template):
@@ -87,9 +87,13 @@ class Processor:
         "member": ["struct_member", "union_member"],
     }
 
+    _COMMENT_REGEX = r"(?://\s*c-name-style\s+(.*))|(?:/\*\s*c-name-style\s+(.*)\*/)"
+
     def __init__(self, rule_set: RuleSet, verbosity: int) -> None:
         self._rule_set = rule_set
         self._verbosity = verbosity
+
+        self._ignore_comments: list[Token] = []
         self._has_failures = False
 
     def _sub_placeholders(self, template: str, placeholders: dict[str, str]) -> str:
@@ -199,17 +203,20 @@ class Processor:
         return (None, None)
 
     def _process_node(self, cursor: Cursor) -> bool:
+        # We look for ignores 
+
         if not conf.lib.clang_Location_isFromMainFile(cursor.location):
             return True
 
         file_path = Path(cursor.location.file.name)
-        location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
-        name = cursor.spelling
 
         config_kind, visibility = self._get_config_kind(cursor, file_path)
 
         if config_kind is None:
             return True
+        
+        location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
+        name = cursor.spelling
 
         pointer_level = None
         if cursor.kind in [CursorKind.VAR_DECL, CursorKind.PARM_DECL, CursorKind.TYPEDEF_DECL, CursorKind.FIELD_DECL]:
@@ -354,6 +361,12 @@ class Processor:
                 for k, v in substitute_vars.items():
                     print(f"   - {k}: {v}")
             if re.fullmatch(rule_regex, name_without_prefix_suffix) is None:
+                # See whether it's been ignored
+                # for ignore in self._ignore_comments:
+                #     if ignore.file == cursor.location.file and 
+                # print(self._ignore_comments)
+                # print(cursor.location)
+
                 rule_name = f"'{rule_to_apply.name} ('{rule_regex}'"
                 parts = []
                 if expanded_prefix is not None:
@@ -368,9 +381,29 @@ class Processor:
 
         return success
 
-    def process(self, cursor: Cursor) -> bool:
-        self._process(cursor)
+    def process(self, translation_unit: TranslationUnit) -> bool:
+        self._process_tokens(translation_unit)
+        self._process(translation_unit.cursor)
         return not self._has_failures
+    
+    def _process_tokens(self, translation_unit: TranslationUnit) -> None:
+        for token in translation_unit.cursor.get_tokens():
+            if token.kind == TokenKind.COMMENT:
+                match = re.fullmatch(Processor._COMMENT_REGEX, token.spelling) 
+                if match is not None:
+                    value = (match.group(1) or match.group(2)).strip()
+                    location = f"{token.location.file}:{token.location.line}:{token.location.column}"
+                    if value == "ignore":
+                        span_before = translation_unit.get_extent(token.location.file.name,
+                                                        ((token.location.line, 1),
+                                                        (token.location.line, 1)))
+                        # TODO: Not working
+                        tokens_before = list(translation_unit.get_tokens(extent=span_before))
+                        if len(tokens_before) == 0 or tokens_before == [token]:
+                            print("Not before")
+                        self._ignore_comments.append(token)
+                    else:
+                        print(f"WARNING: {location} - Unrecognised comment '{token.spelling}'")
 
     def _process(self, cursor: Cursor) -> None:
         passed = self._process_node(cursor)
@@ -411,6 +444,6 @@ if __name__ == "__main__":
     processor = Processor(RuleSet(config), args.verbose)
     index = Index.create()
     translation_unit = index.parse(args.filename)
-    passed = processor.process(translation_unit.cursor)
+    passed = processor.process(translation_unit)
     if not passed:
         sys.exit(1)

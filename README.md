@@ -239,3 +239,11 @@ visibility = local
 ```
 
 This rule will match local variables and all parameters.
+
+
+Ignoring Violations
+-------------------
+
+## Ignore Comments
+
+You can ignore all violations on a line by placing the comment `// c-name-style ignore` (or `/* c-name-style ignore */`) either on the same line or on the line above.

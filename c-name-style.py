@@ -5,9 +5,9 @@ from configparser import ConfigParser
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import Callable
 
-from clang.cindex import Config, Cursor, CursorKind, Index, LinkageKind, TokenKind, TypeKind, Token, TranslationUnit, conf  # type: ignore
+from clang.cindex import Index  # type: ignore
+from clang.cindex import Config, Cursor, CursorKind, LinkageKind, Token, TokenKind, TranslationUnit, TypeKind, conf
 
 
 class SubstTemplate(Template):
@@ -81,14 +81,16 @@ class RuleSet:
                     prefix=prefix,
                     suffix=suffix,
                     rule=rule,
-                    allow_rule=allow_rule
+                    allow_rule=allow_rule,
                 )
             )
+
 
 @dataclass
 class IgnoreComment:
     token: Token
     used: bool = False
+
 
 class Processor:
     _KIND_EXPANSION = {
@@ -103,7 +105,7 @@ class Processor:
         self._rule_set = rule_set
         self._verbosity = verbosity
 
-        self._ignore_comments: dict[str, IgnoreComment] = {} # filename:line -> IgnoreComment
+        self._ignore_comments: dict[str, IgnoreComment] = {}  # filename:line -> IgnoreComment
         self._has_failures = False
 
     def _sub_placeholders(self, template: str, placeholders: dict[str, str]) -> str:
@@ -211,8 +213,10 @@ class Processor:
         if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
             return ("enum_constant", global_or_file)
         return (None, None)
-    
-    def _rule_applies(self, cursor: Cursor, rule: Rule, config_kind: str, visibility: str, pointer_level: int) -> bool:
+
+    def _rule_applies(
+        self, cursor: Cursor, rule: Rule, config_kind: str, visibility: str, pointer_level: int | None
+    ) -> bool:
         rule_kinds = rule.kinds
         if rule_kinds is not None:
             for rule_kind in rule_kinds:
@@ -221,6 +225,7 @@ class Processor:
                     rule_kinds.remove(rule_kind)
             if config_kind not in rule_kinds:
                 if self._verbosity > 2:
+                    assert rule.kinds is not None
                     print(f"  Skip rule '{rule.name}': kind '{config_kind}' not in '{', '.join(rule.kinds)}'")
                 return False
 
@@ -254,20 +259,28 @@ class Processor:
             if self._verbosity > 2:
                 print(f"  Skip rule '{rule.name}: parent_match specified but enum is anonymous")
             return False
-        
+
         return True
-    
+
     # return: true -> everything is OK, false -> rule failed, None -> continue processing
-    def _test_rule(self, cursor: Cursor, rule: Rule, prefix_rules: list[Rule], suffix_rules: list[Rule], location: str, substitute_vars: dict[str, str]) -> bool | None:
+    def _test_rule(
+        self,
+        cursor: Cursor,
+        rule: Rule,
+        prefix_rules: list[Rule],
+        suffix_rules: list[Rule],
+        location: str,
+        substitute_vars: dict[str, str],
+    ) -> bool | None:
         ignore_key = f"{cursor.location.file.name}:{cursor.location.line}"
         ignore_comment = self._ignore_comments.get(ignore_key)
         name = cursor.spelling
         name_without_prefix_suffix = name
-        success = True
+        success: bool | None = True
 
         def test_affix_rules(affix_rules: list[Rule], is_prefix: bool) -> str:
             nonlocal name_without_prefix_suffix
-            nonlocal success 
+            nonlocal success
             expanded_affix = None
 
             if len(affix_rules) > 0:
@@ -282,17 +295,22 @@ class Processor:
                         if self._verbosity > 1:
                             print(
                                 f"    Ignored by comment: Name '{name}' is missing {term} '{expanded_affix}' from [{', '.join(x.name for x in affix_rules)}]"
-                            ) 
+                            )
                     else:
                         print(
                             f"{location} - Name '{name}' is missing {term} '{expanded_affix}' from [{', '.join(x.name for x in affix_rules)}]"
                         )
                         success = False
                 else:
-                    name_without_prefix_suffix = name_without_prefix_suffix[match.end() :] if is_prefix else name_without_prefix_suffix[: match.start()]
+                    name_without_prefix_suffix = (
+                        name_without_prefix_suffix[match.end() :]
+                        if is_prefix
+                        else name_without_prefix_suffix[: match.start()]
+                    )
 
+            assert expanded_affix is not None
             return expanded_affix
-        
+
         # If the affix is an empty string, then the accumulated affix doesn't apply to this rule
         expanded_prefix = test_affix_rules(prefix_rules, is_prefix=True) if rule.prefix != "" else None
         expanded_suffix = test_affix_rules(suffix_rules, is_prefix=False) if rule.suffix != "" else None
@@ -319,7 +337,7 @@ class Processor:
 
         rule_text = rule.rule or rule.allow_rule
         assert rule_text is not None
-        rule_regex = self._sub_placeholders(rule_text or rule.allow_rule, substitute_vars)
+        rule_regex = self._sub_placeholders(rule_text, substitute_vars)
         rule_name = f"'{rule.name}' ('{rule_regex}'"
         parts = []
         if expanded_prefix is not None:
@@ -356,8 +374,6 @@ class Processor:
         return success
 
     def _process_node(self, cursor: Cursor) -> bool:
-        # We look for ignores 
-
         if not conf.lib.clang_Location_isFromMainFile(cursor.location):
             return True
 
@@ -367,7 +383,8 @@ class Processor:
 
         if config_kind is None:
             return True
-        
+        assert visibility is not None
+
         location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
         name = cursor.spelling
 
@@ -432,22 +449,22 @@ class Processor:
                 print(f"WARNING: {location.file.name}:{location.line}:{location.column} - ignore comment not used")
 
         return not self._has_failures
-    
+
     def _process_tokens(self, translation_unit: TranslationUnit) -> None:
         for token in translation_unit.cursor.get_tokens():
             if token.kind == TokenKind.COMMENT:
-                match = re.fullmatch(Processor._COMMENT_REGEX, token.spelling) 
+                match = re.fullmatch(Processor._COMMENT_REGEX, token.spelling)
                 if match is not None:
                     value = (match.group(1) or match.group(2)).strip()
                     location = f"{token.location.file}:{token.location.line}:{token.location.column}"
                     if value == "ignore":
-                        line = token.location.line 
-                        span_before = translation_unit.get_extent(token.location.file.name,
-                                                        ((line, 1),
-                                                        (line, 1)))
+                        line = token.location.line
+                        span_before = translation_unit.get_extent(token.location.file.name, ((line, 1), (line, 1)))
                         tokens_before = list(translation_unit.get_tokens(extent=span_before))
-                        if len(tokens_before) == 0 or (len(tokens_before) == 1 and tokens_before[0].extent == token.extent):
-                            line += 1 # Nothing before it
+                        if len(tokens_before) == 0 or (
+                            len(tokens_before) == 1 and tokens_before[0].extent == token.extent
+                        ):
+                            line += 1  # Nothing before it
                         self._ignore_comments[f"{token.location.file}:{line}"] = IgnoreComment(token=token)
                     else:
                         print(f"WARNING: {location} - Unrecognised comment '{token.spelling}'")

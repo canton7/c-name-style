@@ -53,7 +53,19 @@ Within the `rule`, various placeholders are available:
  - `${pointer-level}`: See [Pointers](#pointers)
  - `${parent}`, `${parent:upper-snake}`: See [Enums](#enums)
 
- You can also define your own placeholders, see [Custom Placeholders](#custom-placeholders).
+You can also define your own placeholders, see [Custom Placeholders](#custom-placeholders).
+
+
+### `allow-rule`
+
+The `allow-rule` option is similar to `rule`, but the behaviour is slightly different.
+
+With `rule`, if the rule matches then the symbol being tested is deemed to be acceptable, and if the rule does not match then an error is printed.
+Either way, processing stops.
+
+With `allow-rule`, if the rule matches then the symbol being tested is deemed to be acceptable and processing stops, however if the rule does not match then no error is printed and processing continues to the next rule.
+
+This provides a means of specifying exceptions to rules.
 
 
 ### `kind` filter
@@ -117,9 +129,11 @@ For e.g. a double pointer `int**`, this `rule` will expand to `p{2}_[a-z]([a-z0-
 
 Rules can specify a `prefix` and/or `suffix`, which specifies a regex which must be present at the start/end of any symbols which match the rule.
 
-Rules which do this do not need to specify a `rule`.
+Rules which do this do not need to specify a `rule` / `allow-rule`.
 If they don't, when rules are processed in top-to-bottom order, processing will not stop at that rule but will continue.
 The prefixes/suffixes from all matching rules are concatenated in order.
+
+If a rule specifies an empty `prefix` / `suffix`, (i.e. `prefix =` or `suffix =`), then no prefix/suffix rules inherited by previous rules will be applied to that rule, however the will still be applied to the next and subsequent rules.
 
 For example:
 

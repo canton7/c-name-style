@@ -24,7 +24,8 @@ class Rule:
     parent_match: str | None
     prefix: str | None
     suffix: str | None
-    rule: str
+    rule: str | None
+    allow_rule: str | None
 
 
 class RuleSet:
@@ -62,9 +63,12 @@ class RuleSet:
             suffix = section.get("suffix")
 
             rule = section.get("rule")
-            # It's OK for there to be no rule if there's a prefix or suffix
-            if rule is None and prefix is None and suffix is None:
-                raise Exception(f"Section {section_name} does not have a 'rule' member")
+            allow_rule = section.get("allow-rule")
+            # It's OK for there to be no rule/allow-rule if there's a prefix or suffix
+            if rule is None and allow_rule is None and prefix is None and suffix is None:
+                raise Exception(f"Section '{section_name}' does not have a 'rule' or 'allow-rule' member")
+            if rule is not None and allow_rule is not None:
+                raise Exception(f"Section '{section_name}' may not have both a 'rule' and an 'allow-rule")
 
             self.rules.append(
                 Rule(
@@ -77,6 +81,7 @@ class RuleSet:
                     prefix=prefix,
                     suffix=suffix,
                     rule=rule,
+                    allow_rule=allow_rule
                 )
             )
 
@@ -251,6 +256,103 @@ class Processor:
             return False
         
         return True
+    
+    # return: true -> everything is OK, false -> rule failed, None -> continue processing
+    def _test_rule(self, cursor: Cursor, rule: Rule, prefix_rules: list[Rule], suffix_rules: list[Rule], location: str, substitute_vars: dict[str, str]) -> bool | None:
+        ignore_key = f"{cursor.location.file.name}:{cursor.location.line}"
+        ignore_comment = self._ignore_comments.get(ignore_key)
+        name = cursor.spelling
+        name_without_prefix_suffix = name
+        success = True
+
+        def test_affix_rules(affix_rules: list[Rule], is_prefix: bool) -> str:
+            nonlocal name_without_prefix_suffix
+            nonlocal success 
+            expanded_affix = None
+
+            if len(affix_rules) > 0:
+                accessor = (lambda x: x.prefix) if is_prefix else (lambda x: x.suffix)
+                term = "prefix" if is_prefix else "suffix"
+                expanded_affix = "".join(self._sub_placeholders(accessor(x), substitute_vars) for x in affix_rules)  # type: ignore
+                regex = "^" + expanded_affix if is_prefix else expanded_affix + "$"
+                match = re.search(regex, name_without_prefix_suffix)
+                if match is None:
+                    if ignore_comment is not None:
+                        ignore_comment.used = True
+                        if self._verbosity > 1:
+                            print(
+                                f"    Ignored by comment: Name '{name}' is missing {term} '{expanded_affix}' from [{', '.join(x.name for x in affix_rules)}]"
+                            ) 
+                    else:
+                        print(
+                            f"{location} - Name '{name}' is missing {term} '{expanded_affix}' from [{', '.join(x.name for x in affix_rules)}]"
+                        )
+                        success = False
+                else:
+                    name_without_prefix_suffix = name_without_prefix_suffix[match.end() :] if is_prefix else name_without_prefix_suffix[: match.start()]
+
+            return expanded_affix
+        
+        # If the affix is an empty string, then the accumulated affix doesn't apply to this rule
+        expanded_prefix = test_affix_rules(prefix_rules, is_prefix=True) if rule.prefix != "" else None
+        expanded_suffix = test_affix_rules(suffix_rules, is_prefix=False) if rule.suffix != "" else None
+
+        if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
+            parent_name = cursor.semantic_parent.spelling
+            if rule.parent_match is not None:
+                # We checked earlier that the enum isn't anonymous if the rule has parent_match
+                assert not cursor.semantic_parent.is_anonymous()
+                match = re.fullmatch(rule.parent_match, parent_name)
+                if match is None:
+                    print(
+                        f"{location} - WARNING: Rule '{rule.name}' parent_match '{rule.parent_match}' does not match parent '{parent_name}'"
+                    )
+                else:
+                    try:
+                        parent_name = match.group("name")
+                    except IndexError:
+                        print(
+                            f"WARNING: Rule '{rule.name}' parent_match '{rule.rule}' does not have a capture group called 'name'"
+                        )
+            substitute_vars["parent"] = re.escape(parent_name)
+            substitute_vars["parent:upper-snake"] = re.escape(re.sub(r"(?<!^)(?=[A-Z])", "_", parent_name).upper())
+
+        rule_text = rule.rule or rule.allow_rule
+        assert rule_text is not None
+        rule_regex = self._sub_placeholders(rule_text or rule.allow_rule, substitute_vars)
+        rule_name = f"'{rule.name}' ('{rule_regex}'"
+        parts = []
+        if expanded_prefix is not None:
+            parts.append(f"prefix '{expanded_prefix}'")
+        if expanded_suffix is not None:
+            parts.append(f"suffix '{expanded_suffix}'")
+        if len(parts) > 0:
+            rule_name += " with " + ", ".join(parts)
+        rule_name += ")"
+
+        if self._verbosity > 1:
+            print(
+                f"  Testing rule {rule_name}. Rule: '{rule_text}' (expanded: '{rule_regex}'); without prefix/suffixes: '{name_without_prefix_suffix}'; placeholders:"
+            )
+            for k, v in substitute_vars.items():
+                print(f"    - {k}: {v}")
+        if re.fullmatch(rule_regex, name_without_prefix_suffix) is None:
+            if ignore_comment is not None:
+                ignore_comment.used = True
+                if self._verbosity > 1:
+                    print(f"    Ignored by comment: '{name}' fails rule {rule_name} but was ignored by a comment")
+            # rule: return true or false. allow_rule: return true or None
+            elif rule.rule is not None:
+                print(f"{location} - Name '{name}' fails rule {rule_name}")
+                success = False
+            else:
+                assert rule.allow_rule is not None
+                print(f"{location} - Name '{name}' fails allow-rule {rule_name}. Continuing...")
+                success = None
+        elif self._verbosity > 1:
+            print(f"    Name '{name}' allowed by rule '{rule.name}'")
+
+        return success
 
     def _process_node(self, cursor: Cursor) -> bool:
         # We look for ignores 
@@ -298,111 +400,26 @@ class Processor:
 
         prefix_rules: list[Rule] = []
         suffix_rules: list[Rule] = []
-        rule_to_apply = None
         for rule in self._rule_set.rules:
             if not self._rule_applies(cursor, rule, config_kind, visibility, pointer_level):
                 continue
 
-            if rule.prefix is not None:
+            # Don't process if empty string
+            if rule.prefix:
                 if self._verbosity > 1:
                     print(f"  Prefix rule '{rule.name}'; prefix: '{rule.prefix}'")
                 prefix_rules.append(rule)
-            if rule.suffix is not None:
+            if rule.suffix:
                 if self._verbosity > 1:
                     print(f"  Suffix rule '{rule.name}; suffix: '{rule.suffix}'")
                 suffix_rules.append(rule)
 
-            if rule.rule is not None:
-                rule_to_apply = rule
-                break
+            if rule.rule is not None or rule.allow_rule is not None:
+                result = self._test_rule(cursor, rule, prefix_rules, suffix_rules, location, substitute_vars)
+                if result is not None:
+                    return result
 
-        name_without_prefix_suffix = name
-        success = True
-
-        ignore_key = f"{cursor.location.file.name}:{cursor.location.line}"
-        ignore_comment = self._ignore_comments.get(ignore_key)
-
-        def test_affix_rules(affix_rules: list[Rule], is_prefix: bool) -> str:
-            nonlocal name_without_prefix_suffix
-            nonlocal success 
-            expanded_affix = None
-
-            if len(affix_rules) > 0:
-                accessor = (lambda x: x.prefix) if is_prefix else (lambda x: x.suffix)
-                term = "prefix" if is_prefix else "suffix"
-                expanded_affix = "".join(self._sub_placeholders(accessor(x), substitute_vars) for x in affix_rules)  # type: ignore
-                regex = "^" + expanded_affix if is_prefix else expanded_affix + "$"
-                # print(regex)
-                # print(name_without_prefix_suffix)
-                match = re.search(regex, name_without_prefix_suffix)
-                if match is None:
-                    if ignore_comment is not None:
-                        ignore_comment.used = True
-                        if self._verbosity > 1:
-                            print(
-                                f"    Ignored by comment: Name '{name}' is missing {term} '{expanded_affix}' from [{', '.join(x.name for x in affix_rules)}]"
-                            ) 
-                    else:
-                        print(
-                            f"{location} - Name '{name}' is missing {term} '{expanded_affix}' from [{', '.join(x.name for x in affix_rules)}]"
-                        )
-                        success = False
-                else:
-                    name_without_prefix_suffix = name_without_prefix_suffix[match.end() :] if is_prefix else name_without_prefix_suffix[: match.start()]
-
-            return expanded_affix
-        
-        expanded_prefix = test_affix_rules(prefix_rules, is_prefix=True)
-        expanded_suffix = test_affix_rules(suffix_rules, is_prefix=False)
-
-        if rule_to_apply is not None:
-            if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
-                parent_name = cursor.semantic_parent.spelling
-                if rule_to_apply.parent_match is not None:
-                    # We checked earlier that the enum isn't anonymous if the rule has parent_match
-                    assert not cursor.semantic_parent.is_anonymous()
-                    match = re.fullmatch(rule_to_apply.parent_match, parent_name)
-                    if match is None:
-                        print(
-                            f"{location} - WARNING: Rule '{rule_to_apply.name}' parent_match '{rule_to_apply.parent_match}' does not match parent '{parent_name}'"
-                        )
-                    else:
-                        try:
-                            parent_name = match.group("name")
-                        except IndexError:
-                            print(
-                                f"WARNING: Rule '{rule_to_apply.name}' parent_match '{rule_to_apply.parent_match}' does not have a capture group called 'name'"
-                            )
-                substitute_vars["parent"] = re.escape(parent_name)
-                substitute_vars["parent:upper-snake"] = re.escape(re.sub(r"(?<!^)(?=[A-Z])", "_", parent_name).upper())
-
-            rule_regex = self._sub_placeholders(rule_to_apply.rule, substitute_vars)
-            if self._verbosity > 1:
-                print(
-                    f"  Testing rule '{rule_to_apply.name}. Rule: '{rule_to_apply.rule}'; expanded: '{rule_regex}'; stripped name: '{name_without_prefix_suffix}'; vars:"
-                )
-                for k, v in substitute_vars.items():
-                    print(f"    - {k}: {v}")
-            if re.fullmatch(rule_regex, name_without_prefix_suffix) is None:
-                rule_name = f"'{rule_to_apply.name} ('{rule_regex}'"
-                parts = []
-                if expanded_prefix is not None:
-                    parts.append(f"prefix '{expanded_prefix}'")
-                if expanded_suffix is not None:
-                    parts.append(f"suffix '{expanded_suffix}'")
-                if len(parts) > 0:
-                    rule_name += " with " + ", ".join(parts)
-                rule_name += ")"
-                
-                if ignore_comment is not None:
-                    ignore_comment.used = True
-                    if self._verbosity > 1:
-                        print(f"    Ignored by comment: '{name}' fails rule {rule_name} but was ignored by a comment")
-                else:
-                    print(f"{location} - Name '{name}' fails rule {rule_name}")
-                    success = False
-
-        return success
+        return True
 
     def process(self, translation_unit: TranslationUnit) -> bool:
         self._process_tokens(translation_unit)

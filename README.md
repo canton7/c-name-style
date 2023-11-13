@@ -1,10 +1,10 @@
-CNameStyle
-==========
+c-name-style 
+============
 
 Introduction
 ------------
 
-CNameStyle is a tool for defining and enforcing naming styles in C code.
+c-name-style is a tool for defining and enforcing naming styles in C code.
 
 It only deals with naming symbols, and not with things like spacing/brace/indentation styles (use clang-format or similar).
 
@@ -21,7 +21,7 @@ You'll also need the Python bindings: these might be installed with LLVM in whic
 Configuration
 -------------
 
-You configure CNameStyle using an ini file, which contains a set of rules.
+You configure c-name-style using an ini file, which contains a set of rules.
 Each rule looks something like this:
 
 ```ini
@@ -33,7 +33,7 @@ rule = ${case:pascal}
 
 Each rule has a name (between the `[` and `]`), one or more filters (described later), and a `rule`.
 
-When CNameStyle encounters a symbol (variable, function, etc) in the file being processed, it searches through the set of rules from top to bottom, looking for one which matches.
+When c-name-style encounters a symbol (variable, function, etc) in the file being processed, it searches through the set of rules from top to bottom, looking for one which matches.
 A rule matches if all of the filters match.
 Once it finds a rule which matches, it tests the `rule` regex to see whether it matches the symbol's name, and prints a message if not.
 

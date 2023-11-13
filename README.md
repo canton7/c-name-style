@@ -13,6 +13,7 @@ Setup
 -----
 
 This tool is built on libclang, so you'll need LLVM 17.0.4+ installed and libclang.dll available.
+You will either need the folder containing libclang.dll (i.g. `llvm/bin`) on your `PATH`, or you can pass the `--libclang` parameter.
 
 You'll also need the Python bindings: these might be installed with LLVM in which case you can set your `PYTHONPATH` to include [this folder](https://github.com/llvm/llvm-project/tree/main/clang/bindings/python/clang), otherwise you can install a Python package such as [libclang](https://pypi.org/project/libclang/).
 

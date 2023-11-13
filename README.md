@@ -80,15 +80,15 @@ If more than one value is given, only one value has to match for the filter to m
 | `parameter` | A function parameter |
 | `variable` | A local variable (inside a function), or a variable defined at file level (i.e. static/global variables) |
 | `function` | A function or function prototype |
-| `struct_tag`, `enum_tag`, `union_tag` | The tag given to a struct, enum or union |
-| `struct_typedef`, `enum_typedef`, `union_typedef`, `function_typedef`, `scalar_typedef` | The name given to a typedef of a struct, enum, union, function, or scalar |
-| `struct_member`, `union_member` | A member of a struct, enum or union |
-| `enum_constant` | An enum constant |
+| `struct-tag`, `enum-tag`, `union-tag` | The tag given to a struct, enum or union |
+| `struct-typedef`, `enum-typedef`, `union-typedef`, `function-typedef`, `scalar-typedef` | The name given to a typedef of a struct, enum, union, function, or scalar |
+| `struct-member`, `union-member` | A member of a struct, enum or union |
+| `enum-constant` | An enum constant |
 
 You can also use the following shorthands:
- - `tag`: `struct_tag`, `enum_tag` and `union_tag`
- - `typedef`: `struct_typedef`, `enum_typedef`, `union_typedef`, `function_typedef` and `scalar_typedef`
- - `member`: `struct_member` and `union_member`
+ - `tag`: `struct-tag`, `enum-tag` and `union-tag`
+ - `typedef`: `struct-typedef`, `enum-typedef`, `union-typedef`, `function-typedef` and `scalar-typedef`
+ - `member`: `struct-member` and `union-member`
 
 
 ### `visibility` filter
@@ -163,7 +163,7 @@ You can also use `suffix` to say that any local, parameter or member can have a 
 
 ```ini
 [Variables may have a unit suffix]
-kind = variable, parameter, struct_member, union_member
+kind = variable, parameter, struct-member, union-member
 suffix = (_[a-zA-Z][a-zA-Z0-9]*)?
 ```
 
@@ -186,7 +186,7 @@ For example:
 
 ```ini
 [Enum members must start with the enum name]
-kind = enum_constant
+kind = enum-constant
 parent_match = (?P<name>.*)_t
 rule = ${parent:upper-snake}_${case:upper-snake}
 ```
@@ -239,10 +239,10 @@ The relationship between `kind`, `visibility`, and pointers is given below.
 | `parameter` | None | Yes |
 | `variable` | `global`, `file`, `local` | Yes |
 | `function` | `global`, `file` | No |
-| `struct_tag`, `enum_tag`, `union_tag` | `global`, `file` | No |
-| `struct_typedef`, `enum_typedef`, `union_typedef`, `function_typedef`, `scalar_typedef` | `global`, `file` | Yes |
-| `struct_member`, `union_member` | None | Yes |
-| `enum_constant` | `global`, `file` | No |
+| `struct-tag`, `enum-tag`, `union-tag` | `global`, `file` | No |
+| `struct-typedef`, `enum-typedef`, `union-typedef`, `function-typedef`, `scalar-typedef` | `global`, `file` | Yes |
+| `struct-member`, `union-member` | None | Yes |
+| `enum-constant` | `global`, `file` | No |
 
 If a filter type is not supported for a particular symbol kind, then the filter is ignored.
 For example:

@@ -94,9 +94,9 @@ class IgnoreComment:
 
 class Processor:
     _KIND_EXPANSION = {
-        "tag": ["struct_tag", "enum_tag", "union_tag"],
-        "typedef": ["struct_typedef", "enum_typedef", "union_typedef", "function_typedef", "scalar_typedef"],
-        "member": ["struct_member", "union_member"],
+        "tag": ["struct-tag", "enum-tag", "union-tag"],
+        "typedef": ["struct-typedef", "enum-typedef", "union-typedef", "function-typedef", "scalar-typedef"],
+        "member": ["struct-member", "union-member"],
     }
 
     _COMMENT_REGEX = r"(?://\s*c-name-style\s+(.*))|(?:/\*\s*c-name-style\s+(.*)\*/)"
@@ -181,15 +181,15 @@ class Processor:
         if cursor.kind == CursorKind.STRUCT_DECL:
             if self._is_struct_enum_union_unnamed(cursor):
                 return (None, None)
-            return ("struct_tag", global_or_file)
+            return ("struct-tag", global_or_file)
         if cursor.kind == CursorKind.UNION_DECL:
             if self._is_struct_enum_union_unnamed(cursor):
                 return (None, None)
-            return ("union_tag", global_or_file)
+            return ("union-tag", global_or_file)
         if cursor.kind == CursorKind.ENUM_DECL:
             if self._is_struct_enum_union_unnamed(cursor):
                 return (None, None)
-            return ("enum_tag", global_or_file)
+            return ("enum-tag", global_or_file)
         if cursor.kind == CursorKind.TYPEDEF_DECL:
             underlying_type = cursor.underlying_typedef_type.get_canonical()
             # Unwrap any pointers
@@ -198,20 +198,20 @@ class Processor:
             if underlying_type.kind == TypeKind.RECORD:
                 # I don't think cindex exposes a way to tell the difference...
                 if underlying_type.spelling.startswith("union "):
-                    return ("union_typedef", global_or_file)
-                return ("struct_typedef", global_or_file)
+                    return ("union-typedef", global_or_file)
+                return ("struct-typedef", global_or_file)
             if underlying_type.kind == TypeKind.ENUM:
-                return ("enum_typedef", global_or_file)
+                return ("enum-typedef", global_or_file)
             if underlying_type.kind == TypeKind.FUNCTIONPROTO:
-                return ("function_typedef", global_or_file)
-            return ("scalar_typedef", global_or_file)
+                return ("function-typedef", global_or_file)
+            return ("scalar-typedef", global_or_file)
         if cursor.kind == CursorKind.FIELD_DECL:
             # I don't think cindex exposes a way to tell the difference...
             if cursor.semantic_parent.type.spelling.startswith("union "):
-                return ("union_member", global_or_file)
-            return ("struct_member", None)
+                return ("union-member", global_or_file)
+            return ("struct-member", None)
         if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
-            return ("enum_constant", global_or_file)
+            return ("enum-constant", global_or_file)
         return (None, None)
 
     def _rule_applies(

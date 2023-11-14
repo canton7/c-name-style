@@ -156,6 +156,10 @@ class Processor:
             return ("parameter", None)
         if cursor.kind == CursorKind.VAR_DECL:
             # In header files, all variables are global
+            if cursor.linkage == LinkageKind.EXTERNAL and conf.lib.clang_Cursor_hasVarDeclExternalStorage(cursor):
+                # Both 'int Foo' and 'extern int foo' come up here. We want to exclude 'extern' as people don't have control
+                # over those names. People can't control the names of symbols defined elsewhere
+                return (None, None)
             if is_header:
                 return ("variable", "global")
             if cursor.linkage == LinkageKind.INTERNAL:
@@ -163,10 +167,6 @@ class Processor:
             if cursor.linkage == LinkageKind.NO_LINKAGE:
                 return ("variable", "local")
             if cursor.linkage == LinkageKind.EXTERNAL:
-                # Both 'int Foo' and 'extern int foo' come up here. We want to exclude 'extern' as people don't have control
-                # over those names. People can't control the names of symbols defined elsewhere
-                if conf.lib.clang_Cursor_hasVarDeclExternalStorage(cursor):
-                    return (None, None)
                 return ("variable", "global")
             print(f"WARNING: Unexpected linkage {cursor.linkage} for {cursor.spelling}")
             return (None, None)

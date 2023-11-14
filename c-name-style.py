@@ -217,7 +217,7 @@ class Processor:
         return (None, None)
 
     def _rule_applies(
-        self, cursor: Cursor, rule: Rule, config_kind: str, visibility: str, pointer_level: int | None
+        self, cursor: Cursor, rule: Rule, config_kind: str, visibility: str | None, pointer_level: int | None
     ) -> bool:
         rule_kinds = rule.kinds
         if rule_kinds is not None:
@@ -280,7 +280,7 @@ class Processor:
         name_without_prefix_suffix = name
         success: bool | None = True
 
-        def test_affix_rules(affix_rules: list[Rule], is_prefix: bool) -> str:
+        def test_affix_rules(affix_rules: list[Rule], is_prefix: bool) -> str | None:
             nonlocal name_without_prefix_suffix
             nonlocal success
             expanded_affix = None
@@ -310,7 +310,6 @@ class Processor:
                         else name_without_prefix_suffix[: match.start()]
                     )
 
-            assert expanded_affix is not None
             return expanded_affix
 
         # If the affix is an empty string, then the accumulated affix doesn't apply to this rule
@@ -385,7 +384,6 @@ class Processor:
 
         if config_kind is None:
             return True
-        assert visibility is not None
 
         location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
         name = cursor.spelling

@@ -117,7 +117,7 @@ class Processor:
         self._verbosity = verbosity
 
         self._ignore_comments: dict[str, list[IgnoreComment]] = {}  # filename -> [IgnoreComment]
-        self._declarations: dict[str, Cursor] = {} # {prototype USR: prototype cursor}
+        self._declarations: dict[str, Cursor] = {}  # {prototype USR: prototype cursor}
         self._has_failures = False
 
     def _sub_placeholders(self, template: str, placeholders: dict[str, str]) -> str:
@@ -158,7 +158,7 @@ class Processor:
         except ValueError:
             return True
 
-    def _get_cursor_type(self, cursor: Cursor) -> str | None:
+    def _get_cursor_type(self, cursor: Cursor) -> str:
         # If llvm can't resolve a type, it replaces it with 'int'. That's unhelpful when we're just trying to match on its name!
         # We'll take what it gives us, and replace 'int' with the actual name.
         identifier: str | None = None
@@ -173,7 +173,10 @@ class Processor:
         return type_name
 
     def _process_included_node(self, cursor: Cursor) -> None:
-        if cursor.kind in (CursorKind.FUNCTION_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL) and not cursor.is_definition():
+        if (
+            cursor.kind in (CursorKind.FUNCTION_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL)
+            and not cursor.is_definition()
+        ):
             self._declarations[cursor.get_usr()] = cursor
 
     # (type, visibility)
@@ -440,10 +443,16 @@ class Processor:
 
         # Ignore function/struct/union definitions that we've found the prototype / previous declaration for
         # (If someone types 'struct Name_Foo_tag' in a header, then 'struct Name_Foo_tag { .. }' in the source file, we don't want to warn for the source file)
-        if cursor.kind in (CursorKind.FUNCTION_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL) and cursor.is_definition() and cursor.get_usr() in self._declarations:
+        if (
+            cursor.kind in (CursorKind.FUNCTION_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL)
+            and cursor.is_definition()
+            and cursor.get_usr() in self._declarations
+        ):
             if self._verbosity > 1:
                 declaration = self._declarations[cursor.get_usr()].location
-                print(f"{location} - Skip '{cursor.spelling}' as a declaration found at {declaration.file.name}:{declaration.line}:{declaration.column}")
+                print(
+                    f"{location} - Skip '{cursor.spelling}' as a declaration found at {declaration.file.name}:{declaration.line}:{declaration.column}"
+                )
             return True
 
         config_kind, visibility = self._get_config_kind(cursor, file_path)
@@ -563,9 +572,9 @@ class Processor:
         # Don't recurse into typedefs for enums and structs, as that's a duplicate of recursing into the typedef'd type
         # (which means we'll visit all struct/enum members twice).
         # Also don't recurse into struct/union members, otherwise we'll complain if we find a member which is a type we don't like
-        is_enum_record_typedef = cursor.kind == CursorKind.TYPEDEF_DECL and cursor.underlying_typedef_type.get_canonical().kind in (
-            TypeKind.RECORD,
-            TypeKind.ENUM
+        is_enum_record_typedef = (
+            cursor.kind == CursorKind.TYPEDEF_DECL
+            and cursor.underlying_typedef_type.get_canonical().kind in (TypeKind.RECORD, TypeKind.ENUM)
         )
         if not is_enum_record_typedef:
             for child in cursor.get_children():

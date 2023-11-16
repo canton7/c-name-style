@@ -158,6 +158,31 @@ class Processor:
         except ValueError:
             return True
 
+    def _get_cursor_type(self, cursor: Cursor) -> str | None:
+        # If llvm can't resolve a type, it replaces it with 'int'. That's unhelpful when we're just trying to match on its name!
+        # We'll take what it gives us, and replace 'int' with the actual name.
+
+        # We're not smart enough to do this for functions (yet)
+        if cursor.kind == CursorKind.FUNCTION_DECL:
+            return None
+
+        parts = []
+        seen_name = False
+        for token in cursor.get_tokens():
+            if token.kind == TokenKind.KEYWORD and token.spelling not in ("voltatile"):
+                parts.append(token.spelling)
+            elif token.kind == TokenKind.PUNCTUATION:
+                parts.append(token.spelling)
+            elif token.kind == TokenKind.IDENTIFIER:
+                # The first of these is the type, and the second is the name
+                if seen_name:
+                    break
+                seen_name = True
+                parts.append(token.spelling)
+
+        if len(parts) > 0:
+            return " ".join(parts)
+        return None
 
     def _process_included_node(self, cursor: Cursor) -> None:
         if cursor.kind in (CursorKind.FUNCTION_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL) and not cursor.is_definition():
@@ -264,19 +289,20 @@ class Processor:
                 print(f"  Skip rule '{rule.name}': pointer level '{pointer_level}' does not match '{rule.pointer}'")
             return False
 
-        if rule.types is not None and not any(re.fullmatch(x, cursor.type.spelling) for x in rule.types):
+        cursor_type = self._get_cursor_type(cursor)
+        if rule.types is not None and not any(re.fullmatch(x, cursor_type) for x in rule.types):
             if self._verbosity > 2:
-                print(f"  Skip rule '{rule.name}': type '{cursor.type.spelling}' not in '{', '.join(rule.types)}'")
+                print(f"  Skip rule '{rule.name}': type '{cursor_type}' not in '{', '.join(rule.types)}'")
             return False
 
         if rule.file is not None and not re.fullmatch(rule.file, cursor.location.file.name):
             if self._verbosity > 2:
-                print(f"  Skip rule '{rule.name}': file '{cursor.type.spelling}' not matched by '{rule.file}'")
+                print(f"  Skip rule '{rule.name}': file '{cursor.location.file.name}' not matched by '{rule.file}'")
             return False
 
         if rule.not_file is not None and re.fullmatch(rule.not_file, cursor.location.file.name):
             if self._verbosity > 2:
-                print(f"  Skip rule '{rule.name}': not-file '{cursor.type.spelling}' matched by '{rule.file}'")
+                print(f"  Skip rule '{rule.name}': not-file '{cursor.location.file.name}' matched by '{rule.file}'")
             return False
 
         if visibility is not None and rule.visibility is not None and visibility not in rule.visibility:
@@ -462,9 +488,10 @@ class Processor:
         }
 
         if self._verbosity > 0:
+            cursor_type = self._get_cursor_type(cursor)
             print(
                 f"{location} - Name: '{name}'; kind: {config_kind}; visibility: {visibility}; "
-                + f"pointer: {pointer_level}; type: '{cursor.type.spelling}'"
+                + f"pointer: {pointer_level}; type: '{cursor_type}'"
             )
 
         prefix_rules: list[Rule] = []

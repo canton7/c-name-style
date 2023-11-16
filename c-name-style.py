@@ -550,6 +550,7 @@ class Processor:
                         self._ignore_comments.setdefault(token.location.file.name, []).append(current_off_comment)
                     elif value == "on":
                         matching_off = current_off_comment
+                        current_off_comment = None  # Either we've closed it, or we've moved onto another file
                         if (
                             matching_off is not None
                             and matching_off.token.location.file.name != token.location.file.name

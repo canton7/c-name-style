@@ -198,9 +198,15 @@ class Processor:
         if cursor.kind == CursorKind.STRUCT_DECL:
             if self._is_struct_enum_union_unnamed(cursor):
                 return (None, None)
+            # Don't want if we see 'struct/union Foo field' inside a struct/union declaration
+            if cursor.lexical_parent.type.kind == TypeKind.RECORD:
+                return (None, None)
             return ("struct-tag", global_or_file)
         if cursor.kind == CursorKind.UNION_DECL:
             if self._is_struct_enum_union_unnamed(cursor):
+                return (None, None)
+            # Don't want if we see 'struct/union Foo field' inside a struct/union declaration
+            if cursor.lexical_parent.type.kind == TypeKind.RECORD:
                 return (None, None)
             return ("union-tag", global_or_file)
         if cursor.kind == CursorKind.ENUM_DECL:
@@ -540,11 +546,13 @@ class Processor:
             self._has_failures = True
 
         # Don't recurse into typedefs for enums and structs, as that's a duplicate of recursing into the typedef'd type
-        # (which means we'll visit all struct/enum members twice)
-        if cursor.kind != CursorKind.TYPEDEF_DECL or cursor.underlying_typedef_type.get_canonical().kind not in [
+        # (which means we'll visit all struct/enum members twice).
+        # Also don't recurse into struct/union members, otherwise we'll complain if we find a member which is a type we don't like
+        is_enum_record_typedef = cursor.kind == CursorKind.TYPEDEF_DECL and cursor.underlying_typedef_type.get_canonical().kind in (
             TypeKind.RECORD,
-            TypeKind.ENUM,
-        ]:
+            TypeKind.ENUM
+        )
+        if not is_enum_record_typedef:
             for child in cursor.get_children():
                 self._process(child)
 

@@ -22,6 +22,8 @@ class Rule:
     kinds: list[str] | None
     visibility: list[str] | None
     types: list[str] | None
+    file: str | None
+    not_file: str | None
     pointer: int | bool | None
     parent_match: str | None
     prefix: str | None
@@ -54,6 +56,9 @@ class RuleSet:
             if visibility is not None:
                 visibility = [x.strip() for x in visibility.split(",")]
 
+            file = section.get("file")
+            not_file = section.get("not-file")
+
             # getboolean parses '1' as true
             try:
                 pointer = section.getint("pointer")
@@ -78,6 +83,8 @@ class RuleSet:
                     kinds=kinds,
                     visibility=visibility,
                     types=variable_types,
+                    file=file,
+                    not_file=not_file,
                     pointer=pointer,
                     parent_match=parent_match,
                     prefix=prefix,
@@ -248,6 +255,16 @@ class Processor:
         if rule.types is not None and not any(re.fullmatch(x, cursor.type.spelling) for x in rule.types):
             if self._verbosity > 2:
                 print(f"  Skip rule '{rule.name}': type '{cursor.type.spelling}' not in '{', '.join(rule.types)}'")
+            return False
+
+        if rule.file is not None and not re.fullmatch(rule.file, cursor.location.file.name):
+            if self._verbosity > 2:
+                print(f"  Skip rule '{rule.name}': file '{cursor.type.spelling}' not matched by '{rule.file}'")
+            return False
+
+        if rule.not_file is not None and re.fullmatch(rule.not_file, cursor.location.file.name):
+            if self._verbosity > 2:
+                print(f"  Skip rule '{rule.name}': not-file '{cursor.type.spelling}' matched by '{rule.file}'")
             return False
 
         if visibility is not None and rule.visibility is not None and visibility not in rule.visibility:

@@ -103,6 +103,13 @@ In header files, everything at file scope has `global` visibility.
 The sorts of visibility applicable to different `kinds` are given [below](#compatibility).
 
 
+### `file` and `not-file` filters
+
+The `file` and `not-files` contain a single regex which is matched against the file path (as passed to `c-name-style.py`).
+If `file` is specified, then only files whose pathm match this regex will match the rule.
+If `not-file` is specified, then only files whose path do not match this regex will match the rule.
+
+
 ### Pointers
 
 By default, the `kind` values which support pointers (see [Compatibility](#compatibility)) will match pointer and non-pointer types, e.g. `kind = variable` will match both `int foo` and `int* foo`.

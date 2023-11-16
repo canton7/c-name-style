@@ -161,28 +161,16 @@ class Processor:
     def _get_cursor_type(self, cursor: Cursor) -> str | None:
         # If llvm can't resolve a type, it replaces it with 'int'. That's unhelpful when we're just trying to match on its name!
         # We'll take what it gives us, and replace 'int' with the actual name.
-
-        # We're not smart enough to do this for functions (yet)
-        if cursor.kind == CursorKind.FUNCTION_DECL:
-            return None
-
-        parts = []
-        seen_name = False
+        identifier: str | None = None
         for token in cursor.get_tokens():
-            if token.kind == TokenKind.KEYWORD and token.spelling not in ("voltatile"):
-                parts.append(token.spelling)
-            elif token.kind == TokenKind.PUNCTUATION:
-                parts.append(token.spelling)
-            elif token.kind == TokenKind.IDENTIFIER:
-                # The first of these is the type, and the second is the name
-                if seen_name:
-                    break
-                seen_name = True
-                parts.append(token.spelling)
+            if token.kind == TokenKind.IDENTIFIER:
+                identifier = token.spelling
+                break
 
-        if len(parts) > 0:
-            return " ".join(parts)
-        return None
+        type_name = cursor.type.spelling
+        if identifier is not None:
+            type_name = type_name.replace("int", identifier)
+        return type_name
 
     def _process_included_node(self, cursor: Cursor) -> None:
         if cursor.kind in (CursorKind.FUNCTION_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL) and not cursor.is_definition():

@@ -276,7 +276,14 @@ class Processor:
         location: str,
         substitute_vars: dict[str, str],
     ) -> bool | None:
-        ignore_comment = next((x for x in self._ignore_comments.get(cursor.location.file.name, []) if x.start_line <= cursor.location.line and (x.end_line is None or x.end_line >= cursor.location.line)), None)
+        ignore_comment = next(
+            (
+                x
+                for x in self._ignore_comments.get(cursor.location.file.name, [])
+                if x.start_line <= cursor.location.line and (x.end_line is None or x.end_line >= cursor.location.line)
+            ),
+            None,
+        )
         name = cursor.spelling
         name_without_prefix_suffix = name
         success: bool | None = True
@@ -468,16 +475,23 @@ class Processor:
                             len(tokens_before) == 1 and tokens_before[0].extent == token.extent
                         ):
                             line += 1  # Nothing before it
-                        self._ignore_comments.setdefault(token.location.file.name, []).append(IgnoreComment(start_line=line, end_line=line, token=token))
+                        self._ignore_comments.setdefault(token.location.file.name, []).append(
+                            IgnoreComment(start_line=line, end_line=line, token=token)
+                        )
                     elif value == "off":
                         current_off_comment = IgnoreComment(start_line=token.location.line, end_line=None, token=token)
                         self._ignore_comments.setdefault(token.location.file.name, []).append(current_off_comment)
                     elif value == "on":
                         matching_off = current_off_comment
-                        if matching_off is not None and matching_off.token.location.file.name != token.location.file.name:
+                        if (
+                            matching_off is not None
+                            and matching_off.token.location.file.name != token.location.file.name
+                        ):
                             matching_off = None
                         if matching_off is None:
-                            print(f"WARNING: {location} - '{token.spelling}' without a corresponding 'c-name-style off'")
+                            print(
+                                f"WARNING: {location} - '{token.spelling}' without a corresponding 'c-name-style off'"
+                            )
                         else:
                             matching_off.end_line = token.location.line
                     else:

@@ -90,6 +90,8 @@ class RuleSet:
 
 @dataclass
 class IgnoreComment:
+    start_line: int
+    end_line: int | None
     token: Token
     used: bool = False
 
@@ -107,7 +109,7 @@ class Processor:
         self._rule_set = rule_set
         self._verbosity = verbosity
 
-        self._ignore_comments: dict[str, IgnoreComment] = {}  # filename:line -> IgnoreComment
+        self._ignore_comments: dict[str, list[IgnoreComment]] = {}  # filename -> [IgnoreComment]
         self._has_failures = False
 
     def _sub_placeholders(self, template: str, placeholders: dict[str, str]) -> str:
@@ -274,8 +276,7 @@ class Processor:
         location: str,
         substitute_vars: dict[str, str],
     ) -> bool | None:
-        ignore_key = f"{cursor.location.file.name}:{cursor.location.line}"
-        ignore_comment = self._ignore_comments.get(ignore_key)
+        ignore_comment = next((x for x in self._ignore_comments.get(cursor.location.file.name, []) if x.start_line <= cursor.location.line and (x.end_line is None or x.end_line >= cursor.location.line)), None)
         name = cursor.spelling
         name_without_prefix_suffix = name
         success: bool | None = True
@@ -443,14 +444,16 @@ class Processor:
         self._process_tokens(translation_unit)
         self._process(translation_unit.cursor)
 
-        for ignore_comment in self._ignore_comments.values():
-            if not ignore_comment.used:
-                location = ignore_comment.token.location
-                print(f"WARNING: {location.file.name}:{location.line}:{location.column} - ignore comment not used")
+        for ignore_comments in self._ignore_comments.values():
+            for ignore_comment in ignore_comments:
+                if not ignore_comment.used:
+                    location = ignore_comment.token.location
+                    print(f"WARNING: {location.file.name}:{location.line}:{location.column} - ignore comment not used")
 
         return not self._has_failures
 
     def _process_tokens(self, translation_unit: TranslationUnit) -> None:
+        current_off_comment: IgnoreComment | None = None
         for token in translation_unit.cursor.get_tokens():
             if token.kind == TokenKind.COMMENT:
                 match = re.fullmatch(Processor._COMMENT_REGEX, token.spelling)
@@ -465,7 +468,18 @@ class Processor:
                             len(tokens_before) == 1 and tokens_before[0].extent == token.extent
                         ):
                             line += 1  # Nothing before it
-                        self._ignore_comments[f"{token.location.file}:{line}"] = IgnoreComment(token=token)
+                        self._ignore_comments.setdefault(token.location.file.name, []).append(IgnoreComment(start_line=line, end_line=line, token=token))
+                    elif value == "off":
+                        current_off_comment = IgnoreComment(start_line=token.location.line, end_line=None, token=token)
+                        self._ignore_comments.setdefault(token.location.file.name, []).append(current_off_comment)
+                    elif value == "on":
+                        matching_off = current_off_comment
+                        if matching_off is not None and matching_off.token.location.file.name != token.location.file.name:
+                            matching_off = None
+                        if matching_off is None:
+                            print(f"WARNING: {location} - '{token.spelling}' without a corresponding 'c-name-style off'")
+                        else:
+                            matching_off.end_line = token.location.line
                     else:
                         print(f"WARNING: {location} - Unrecognised comment '{token.spelling}'")
 

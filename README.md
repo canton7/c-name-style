@@ -262,3 +262,5 @@ Ignoring Violations
 ### Ignore Comments
 
 You can ignore all violations on a line by placing the comment `// c-name-style ignore` (or `/* c-name-style ignore */`) either on the same line or on the line above.
+
+You can also disable c-name-style for a region of code by using `// c-name-style off`, and re-enable later with `// c-name-style on`.

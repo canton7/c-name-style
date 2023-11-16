@@ -117,7 +117,7 @@ class Processor:
         self._verbosity = verbosity
 
         self._ignore_comments: dict[str, list[IgnoreComment]] = {}  # filename -> [IgnoreComment]
-        self._function_declarations: dict[str, Cursor] = {} # {prototype USR: prototype cursor}
+        self._declarations: dict[str, Cursor] = {} # {prototype USR: prototype cursor}
         self._has_failures = False
 
     def _sub_placeholders(self, template: str, placeholders: dict[str, str]) -> str:
@@ -160,9 +160,8 @@ class Processor:
 
 
     def _process_included_node(self, cursor: Cursor) -> None:
-        if cursor.kind == CursorKind.FUNCTION_DECL and not cursor.is_definition():
-            definition = cursor.get_definition()
-            self._function_declarations[cursor.get_usr()] = cursor
+        if cursor.kind in (CursorKind.FUNCTION_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL) and not cursor.is_definition():
+            self._declarations[cursor.get_usr()] = cursor
 
     # (type, visibility)
     def _get_config_kind(self, cursor: Cursor, file_path: Path) -> tuple[str | None, str | None]:
@@ -409,18 +408,21 @@ class Processor:
     def _process_node(self, cursor: Cursor) -> bool:
         if cursor.kind == CursorKind.TRANSLATION_UNIT:
             return True
+
+        # There might be prototypes earlier in the file. We only want to warn once
+        self._process_included_node(cursor)
         if not conf.lib.clang_Location_isFromMainFile(cursor.location):
-            self._process_included_node(cursor)
             return True
 
         file_path = Path(cursor.location.file.name)
 
         location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
 
-        # Ignore function definitions that we've found the prototype for
-        if cursor.kind == CursorKind.FUNCTION_DECL and cursor.is_definition() and cursor.get_usr() in self._function_declarations:
+        # Ignore function/struct/union definitions that we've found the prototype / previous declaration for
+        # (If someone types 'struct Name_Foo_tag' in a header, then 'struct Name_Foo_tag { .. }' in the source file, we don't want to warn for the source file)
+        if cursor.kind in (CursorKind.FUNCTION_DECL, CursorKind.STRUCT_DECL, CursorKind.UNION_DECL) and cursor.is_definition() and cursor.get_usr() in self._declarations:
             if self._verbosity > 1:
-                declaration = self._function_declarations[cursor.get_usr()].location
+                declaration = self._declarations[cursor.get_usr()].location
                 print(f"{location} - Skip '{cursor.spelling}' as a declaration found at {declaration.file.name}:{declaration.line}:{declaration.column}")
             return True
 

@@ -117,7 +117,7 @@ class Processor:
         self._verbosity = verbosity
 
         self._ignore_comments: dict[str, list[IgnoreComment]] = {}  # filename -> [IgnoreComment]
-        self._function_definitions: dict[Cursor, Cursor] = {} # {definition: declaration}
+        self._function_declarations: dict[str, Cursor] = {} # {prototype USR: prototype cursor}
         self._has_failures = False
 
     def _sub_placeholders(self, template: str, placeholders: dict[str, str]) -> str:
@@ -160,10 +160,9 @@ class Processor:
 
 
     def _process_included_node(self, cursor: Cursor) -> None:
-        if cursor.kind == CursorKind.FUNCTION_DECL:
+        if cursor.kind == CursorKind.FUNCTION_DECL and not cursor.is_definition():
             definition = cursor.get_definition()
-            if definition is not None:
-                self._function_definitions[definition] = cursor
+            self._function_declarations[cursor.get_usr()] = cursor
 
     # (type, visibility)
     def _get_config_kind(self, cursor: Cursor, file_path: Path) -> tuple[str | None, str | None]:
@@ -419,10 +418,10 @@ class Processor:
         location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
 
         # Ignore function definitions that we've found the prototype for
-        if cursor.kind == CursorKind.FUNCTION_DECL and cursor in self._function_definitions:
+        if cursor.kind == CursorKind.FUNCTION_DECL and cursor.is_definition() and cursor.get_usr() in self._function_declarations:
             if self._verbosity > 1:
-                declaration = self._function_definitions[cursor].location
-                print(f"{location} - Skip '{cursor.spelling}' as a definition found at {declaration.file.name}:{declaration.line}:{declaration.column}")
+                declaration = self._function_declarations[cursor.get_usr()].location
+                print(f"{location} - Skip '{cursor.spelling}' as a declaration found at {declaration.file.name}:{declaration.line}:{declaration.column}")
             return True
 
         config_kind, visibility = self._get_config_kind(cursor, file_path)

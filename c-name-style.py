@@ -60,7 +60,7 @@ class RuleSet:
             except ValueError:
                 pointer = section.getboolean("pointer")
 
-            parent_match = section.get("parent_match")
+            parent_match = section.get("parent-match")
             prefix = section.get("prefix")
             suffix = section.get("suffix")
 
@@ -259,7 +259,7 @@ class Processor:
             and cursor.semantic_parent.is_anonymous()
         ):
             if self._verbosity > 2:
-                print(f"  Skip rule '{rule.name}: parent_match specified but enum is anonymous")
+                print(f"  Skip rule '{rule.name}: parent-match specified but enum is anonymous")
             return False
 
         return True
@@ -324,14 +324,14 @@ class Processor:
                 match = re.fullmatch(rule.parent_match, parent_name)
                 if match is None:
                     print(
-                        f"{location} - WARNING: Rule '{rule.name}' parent_match '{rule.parent_match}' does not match parent '{parent_name}'"
+                        f"{location} - WARNING: Rule '{rule.name}' parent-match '{rule.parent_match}' does not match parent '{parent_name}'"
                     )
                 else:
                     try:
                         parent_name = match.group("name")
                     except IndexError:
                         print(
-                            f"WARNING: Rule '{rule.name}' parent_match '{rule.rule}' does not have a capture group called 'name'"
+                            f"WARNING: Rule '{rule.name}' parent-match '{rule.rule}' does not have a capture group called 'name'"
                         )
             substitute_vars["parent"] = re.escape(parent_name)
             substitute_vars["parent:upper-snake"] = re.escape(re.sub(r"(?<!^)(?=[A-Z])", "_", parent_name).upper())

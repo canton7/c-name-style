@@ -171,15 +171,15 @@ suffix = (_[a-zA-Z][a-zA-Z0-9]*)?
 ### Enums
 
 Enum constants often need to start with the name of the enum, as a form of namespacing.
-This can be achieved with the `parent_match` option.
+This can be achieved with the `parent-match` option.
 
-`parent_match` must contain a regex which is matched against the enum name (the tag name if the enum has a tag, or else the typedef name if the enum is anonymous and is typedef'd).
+`parent-match` must contain a regex which is matched against the enum name (the tag name if the enum has a tag, or else the typedef name if the enum is anonymous and is typedef'd).
 It must contain a capture group called `name`.
 
-If the enum is anonymous and isn't typedef'd, rules which specify `parent_match` will not match.
+If the enum is anonymous and isn't typedef'd, rules which specify `parent-match` will not match.
 
 The value of the `name` capture group is then made available as a placeholder in the `rule`, as:
-  - `${parent}`: The actual value matched by the `parent_match` regex capture group
+  - `${parent}`: The actual value matched by the `parent-match` regex capture group
   - `${parent:upper-snake}`: The same value converted to `UPPER_SNAKE_CASE`
 
 For example:
@@ -187,7 +187,7 @@ For example:
 ```ini
 [Enum members must start with the enum name]
 kind = enum-constant
-parent_match = (?P<name>.*)_t
+parent-match = (?P<name>.*)_t
 rule = ${parent:upper-snake}_${case:upper-snake}
 ```
 
@@ -259,6 +259,6 @@ This rule will match local variables and all parameters.
 Ignoring Violations
 -------------------
 
-## Ignore Comments
+### Ignore Comments
 
 You can ignore all violations on a line by placing the comment `// c-name-style ignore` (or `/* c-name-style ignore */`) either on the same line or on the line above.

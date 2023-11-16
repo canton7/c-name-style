@@ -117,6 +117,7 @@ class Processor:
         self._verbosity = verbosity
 
         self._ignore_comments: dict[str, list[IgnoreComment]] = {}  # filename -> [IgnoreComment]
+        self._function_definitions: dict[Cursor, Cursor] = {} # {definition: declaration}
         self._has_failures = False
 
     def _sub_placeholders(self, template: str, placeholders: dict[str, str]) -> str:
@@ -156,6 +157,13 @@ class Processor:
             return False
         except ValueError:
             return True
+
+
+    def _process_included_node(self, cursor: Cursor) -> None:
+        if cursor.kind == CursorKind.FUNCTION_DECL:
+            definition = cursor.get_definition()
+            if definition is not None:
+                self._function_definitions[definition] = cursor
 
     # (type, visibility)
     def _get_config_kind(self, cursor: Cursor, file_path: Path) -> tuple[str | None, str | None]:
@@ -400,17 +408,28 @@ class Processor:
         return success
 
     def _process_node(self, cursor: Cursor) -> bool:
+        if cursor.kind == CursorKind.TRANSLATION_UNIT:
+            return True
         if not conf.lib.clang_Location_isFromMainFile(cursor.location):
+            self._process_included_node(cursor)
             return True
 
         file_path = Path(cursor.location.file.name)
+
+        location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
+
+        # Ignore function definitions that we've found the prototype for
+        if cursor.kind == CursorKind.FUNCTION_DECL and cursor in self._function_definitions:
+            if self._verbosity > 1:
+                declaration = self._function_definitions[cursor].location
+                print(f"{location} - Skip '{cursor.spelling}' as a definition found at {declaration.file.name}:{declaration.line}:{declaration.column}")
+            return True
 
         config_kind, visibility = self._get_config_kind(cursor, file_path)
 
         if config_kind is None:
             return True
 
-        location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
         name = cursor.spelling
 
         pointer_level = None
@@ -534,6 +553,7 @@ if __name__ == "__main__":
     parser.add_argument("filename", help="Path to the file to process")
     parser.add_argument("-c", "--config", required=True, help="Path to the configuration file")
     parser.add_argument("--libclang", help="Path to libclang.dll, if it isn't in your PATH")
+    parser.add_argument("-I", help="Include path (specify multiple times)", dest="include", action="append", default=[])
     parser.add_argument(
         "-v",
         "--verbose",
@@ -552,7 +572,7 @@ if __name__ == "__main__":
 
     processor = Processor(RuleSet(config), args.verbose)
     index = Index.create()
-    translation_unit = index.parse(args.filename)
+    translation_unit = index.parse(args.filename, args=[f"-I{x}" for x in args.include])
     passed = processor.process(translation_unit)
     if not passed:
         sys.exit(1)

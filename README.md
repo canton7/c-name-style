@@ -105,7 +105,7 @@ The sorts of visibility applicable to different `kinds` are given [below](#compa
 
 ### `file` and `not-file` filters
 
-The `file` and `not-files` contain a single regex which is matched against the file path (as passed to `c-name-style.py`).
+The `file` and `not-files` contain a single regex which is matched against the file path (as passed to c-name-style).
 If `file` is specified, then only files whose pathm match this regex will match the rule.
 If `not-file` is specified, then only files whose path do not match this regex will match the rule.
 
@@ -271,3 +271,17 @@ Ignoring Violations
 You can ignore all violations on a line by placing the comment `// c-name-style ignore` (or `/* c-name-style ignore */`) either on the same line or on the line above.
 
 You can also disable c-name-style for a region of code by using `// c-name-style off`, and re-enable later with `// c-name-style on`.
+
+
+Function prototypes and include paths
+-------------------------------------
+
+When c-name-style finds a function definition, it looks in all of the header files in the translation unit to try and find a prototype.
+If it finds one, it doesn't analyse the function name.
+This means that you won't get violations if you provide the implementation for a function which is defined in another header.
+
+The implication is that you need to analyse source files and header files separately.
+If `Foo.c` includes `Foo.h`, you should pass both `Foo.c` and `Foo.h` to c-name-style.
+
+You also need to set up your include paths for this mechanism to work: c-name-style needs to be able to find your headers.
+Pass the `-I` flag to add paths to the include path.

@@ -145,7 +145,7 @@ class Processor:
         elif cursor.kind == CursorKind.UNION_DECL:
             t = "union"
         else:
-            raise AssertionError()
+            return False
         tokens = [x.spelling for x in cursor.get_tokens()]
         try:
             type_pos = tokens.index(t)
@@ -212,22 +212,16 @@ class Processor:
             print(f"WARNING: Unexpected linkage {cursor.linkage} for {cursor.spelling}")
             return (None, None)
         if cursor.kind == CursorKind.STRUCT_DECL:
-            if self._is_struct_enum_union_unnamed(cursor):
-                return (None, None)
             # Don't want if we see 'struct/union Foo field' inside a struct/union declaration
             if cursor.lexical_parent.type.kind == TypeKind.RECORD:
                 return (None, None)
             return ("struct-tag", global_or_file)
         if cursor.kind == CursorKind.UNION_DECL:
-            if self._is_struct_enum_union_unnamed(cursor):
-                return (None, None)
             # Don't want if we see 'struct/union Foo field' inside a struct/union declaration
             if cursor.lexical_parent.type.kind == TypeKind.RECORD:
                 return (None, None)
             return ("union-tag", global_or_file)
         if cursor.kind == CursorKind.ENUM_DECL:
-            if self._is_struct_enum_union_unnamed(cursor):
-                return (None, None)
             return ("enum-tag", global_or_file)
         if cursor.kind == CursorKind.TYPEDEF_DECL:
             underlying_type = cursor.underlying_typedef_type.get_canonical()
@@ -316,6 +310,7 @@ class Processor:
     def _test_rule(
         self,
         cursor: Cursor,
+        name: str,
         rule: Rule,
         prefix_rules: list[Rule],
         suffix_rules: list[Rule],
@@ -330,7 +325,7 @@ class Processor:
             ),
             None,
         )
-        name = cursor.spelling
+
         name_without_prefix_suffix = name
         success: bool | None = True
 
@@ -460,7 +455,7 @@ class Processor:
         if config_kind is None:
             return True
 
-        name = cursor.spelling
+        name = "" if self._is_struct_enum_union_unnamed(cursor) else cursor.spelling
 
         pointer_level = None
         if cursor.kind in [CursorKind.VAR_DECL, CursorKind.PARM_DECL, CursorKind.TYPEDEF_DECL, CursorKind.FIELD_DECL]:
@@ -508,7 +503,7 @@ class Processor:
                 suffix_rules.append(rule)
 
             if rule.rule is not None or rule.allow_rule is not None:
-                result = self._test_rule(cursor, rule, prefix_rules, suffix_rules, location, substitute_vars)
+                result = self._test_rule(cursor, name, rule, prefix_rules, suffix_rules, location, substitute_vars)
                 if result is not None:
                     return result
 

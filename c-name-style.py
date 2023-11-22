@@ -171,6 +171,9 @@ class Processor:
         if identifier is not None:
             type_name = type_name.replace("int", identifier)
         return type_name
+    
+    def _to_upper_snake(self, name: str):
+        return re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper()
 
     def _process_included_node(self, cursor: Cursor) -> None:
         if (
@@ -245,6 +248,8 @@ class Processor:
             return ("struct-member", None)
         if cursor.kind == CursorKind.ENUM_CONSTANT_DECL:
             return ("enum-constant", global_or_file)
+        if cursor.kind == CursorKind.MACRO_DEFINITION:
+            return ("macro", global_or_file)
         return (None, None)
 
     def _rule_applies(
@@ -383,7 +388,7 @@ class Processor:
                             f"WARNING: Rule '{rule.name}' parent-match '{rule.rule}' does not have a capture group called 'name'"
                         )
             substitute_vars["parent"] = re.escape(parent_name)
-            substitute_vars["parent:upper-snake"] = re.escape(re.sub(r"(?<!^)(?=[A-Z])", "_", parent_name).upper())
+            substitute_vars["parent:upper-snake"] = re.escape(self._to_upper_snake(parent_name))
 
         rule_text = rule.rule or rule.allow_rule
         assert rule_text is not None
@@ -473,10 +478,11 @@ class Processor:
 
         substitute_vars = {
             "filename": re.escape(file_path.stem),
-            "case:camel": "[a-z][a-zA-Z0-9]*",
-            "case:pascal": "[A-Z][a-zA-Z0-9]*",
-            "case:snake": "[a-z]([a-z0-9_]*[a-z0-9])?",
-            "case:upper-snake": "[A-Z]([A-Z0-9_]*[A-Z0-9])?",
+            "filename:upper-snake": re.escape(self._to_upper_snake(file_path.stem)),
+            "case:camel": "[a-z0-9][a-zA-Z0-9]*",
+            "case:pascal": "[A-Z0-09][a-zA-Z0-9]*",
+            "case:snake": "[a-z0-9]([a-z0-9_]*[a-z0-9])?",
+            "case:upper-snake": "[A-Z0-9]([A-Z0-9_]*[A-Z0-9])?",
             "pointer-level": str(pointer_level),
         }
 
@@ -602,7 +608,7 @@ if __name__ == "__main__":
 
     processor = Processor(RuleSet(config), args.verbose)
     index = Index.create()
-    translation_unit = index.parse(args.filename, args=[f"-I{x}" for x in args.include])
+    translation_unit = index.parse(args.filename, args=[f"-I{x}" for x in args.include], options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD)
     passed = processor.process(translation_unit)
     if not passed:
         sys.exit(1)

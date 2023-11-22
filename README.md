@@ -84,6 +84,7 @@ If more than one value is given, only one value has to match for the filter to m
 | `struct-typedef`, `enum-typedef`, `union-typedef`, `function-typedef`, `scalar-typedef` | The name given to a typedef of a struct, enum, union, function, or scalar |
 | `struct-member`, `union-member` | A member of a struct, enum or union |
 | `enum-constant` | An enum constant |
+| `macro` | macro definition |
 
 You can also use the following shorthands:
  - `tag`: `struct-tag`, `enum-tag` and `union-tag`
@@ -250,6 +251,7 @@ The relationship between `kind`, `visibility`, and pointers is given below.
 | `struct-typedef`, `enum-typedef`, `union-typedef`, `function-typedef`, `scalar-typedef` | `global`, `file` | Yes |
 | `struct-member`, `union-member` | None | Yes |
 | `enum-constant` | `global`, `file` | No |
+| `macro` | `global`, `file` | No |
 
 If a filter type is not supported for a particular symbol kind, then the filter is ignored.
 For example:

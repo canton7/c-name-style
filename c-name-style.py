@@ -417,7 +417,8 @@ class Processor:
                 assert rule.allow_rule is not None
                 if self._verbosity > 1:
                     print(f"{location} - Name '{name}' fails allow-rule {rule_name}. Continuing...")
-                success = None
+                if success:  # Don't overwrite False with None
+                    success = None
         elif self._verbosity > 1:
             print(f"    Name '{name}' allowed by rule '{rule.name}'")
 

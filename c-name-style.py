@@ -171,7 +171,7 @@ class Processor:
         if identifier is not None:
             type_name = type_name.replace("int", identifier)
         return type_name
-    
+
     def _to_upper_snake(self, name: str):
         return re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper()
 
@@ -354,7 +354,7 @@ class Processor:
                             )
                     else:
                         print(
-                            f"{location} - Name '{name}' is missing {term} '{expanded_affix}' from [{', '.join(x.name for x in affix_rules)}]"
+                            f"{location}: error: Name '{name}' is missing {term} '{expanded_affix}' from [{', '.join(x.name for x in affix_rules)}]"
                         )
                         success = False
                 else:
@@ -378,14 +378,14 @@ class Processor:
                 match = re.fullmatch(rule.parent_match, parent_name)
                 if match is None:
                     print(
-                        f"{location} - WARNING: Rule '{rule.name}' parent-match '{rule.parent_match}' does not match parent '{parent_name}'"
+                        f"{location}: warning: Rule '{rule.name}' parent-match '{rule.parent_match}' does not match parent '{parent_name}'"
                     )
                 else:
                     try:
                         parent_name = match.group("name")
                     except IndexError:
                         print(
-                            f"WARNING: Rule '{rule.name}' parent-match '{rule.rule}' does not have a capture group called 'name'"
+                            f"warning: Rule '{rule.name}' parent-match '{rule.rule}' does not have a capture group called 'name'"
                         )
             substitute_vars["parent"] = re.escape(parent_name)
             substitute_vars["parent:upper-snake"] = re.escape(self._to_upper_snake(parent_name))
@@ -416,12 +416,12 @@ class Processor:
                     print(f"    Ignored by comment: '{name}' fails rule {rule_name} but was ignored by a comment")
             # rule: return true or false. allow_rule: return true or None
             elif rule.rule is not None:
-                print(f"{location} - Name '{name}' fails rule {rule_name}")
+                print(f"{location}: error: Name '{name}' fails rule {rule_name}")
                 success = False
             else:
                 assert rule.allow_rule is not None
                 if self._verbosity > 1:
-                    print(f"{location} - Name '{name}' fails allow-rule {rule_name}. Continuing...")
+                    print(f"{location}: note: Name '{name}' fails allow-rule {rule_name}. Continuing...")
                 if success:  # Don't overwrite False with None
                     success = None
         elif self._verbosity > 1:
@@ -452,7 +452,7 @@ class Processor:
             if self._verbosity > 1:
                 declaration = self._declarations[cursor.get_usr()].location
                 print(
-                    f"{location} - Skip '{cursor.spelling}' as a declaration found at {declaration.file.name}:{declaration.line}:{declaration.column}"
+                    f"{location}: note: Skip '{cursor.spelling}' as a declaration found at {declaration.file.name}:{declaration.line}:{declaration.column}"
                 )
             return True
 
@@ -489,7 +489,7 @@ class Processor:
         if self._verbosity > 0:
             cursor_type = self._get_cursor_type(cursor)
             print(
-                f"{location} - Name: '{name}'; kind: {config_kind}; visibility: {visibility}; "
+                f"{location}: note: Name: '{name}'; kind: {config_kind}; visibility: {visibility}; "
                 + f"pointer: {pointer_level}; type: '{cursor_type}'"
             )
 
@@ -524,7 +524,7 @@ class Processor:
             for ignore_comment in ignore_comments:
                 if not ignore_comment.used:
                     location = ignore_comment.token.location
-                    print(f"WARNING: {location.file.name}:{location.line}:{location.column} - ignore comment not used")
+                    print(f"{location.file.name}:{location.line}:{location.column}: warning: ignore comment not used")
 
         return not self._has_failures
 
@@ -559,13 +559,11 @@ class Processor:
                         ):
                             matching_off = None
                         if matching_off is None:
-                            print(
-                                f"WARNING: {location} - '{token.spelling}' without a corresponding 'c-name-style off'"
-                            )
+                            print(f"{location}: warning: '{token.spelling}' without a corresponding 'c-name-style off'")
                         else:
                             matching_off.end_line = token.location.line
                     else:
-                        print(f"WARNING: {location} - Unrecognised comment '{token.spelling}'")
+                        print(f"{location}: warning: Unrecognised comment '{token.spelling}'")
 
     def _process(self, cursor: Cursor) -> None:
         passed = self._process_node(cursor)
@@ -608,7 +606,9 @@ if __name__ == "__main__":
 
     processor = Processor(RuleSet(config), args.verbose)
     index = Index.create()
-    translation_unit = index.parse(args.filename, args=[f"-I{x}" for x in args.include], options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD)
+    translation_unit = index.parse(
+        args.filename, args=[f"-I{x}" for x in args.include], options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD
+    )
     passed = processor.process(translation_unit)
     if not passed:
         sys.exit(1)

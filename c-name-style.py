@@ -173,7 +173,12 @@ class Processor:
         return type_name
 
     def _to_upper_snake(self, name: str):
-        return re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper()
+        result = name[0].upper()
+        for i in range(1, len(name)):
+            if name[i].isupper() and not name[i - 1].isupper():
+                result += "_"
+            result += name[i].upper()
+        return result
 
     def _process_included_node(self, cursor: Cursor) -> None:
         if (

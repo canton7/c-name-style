@@ -594,6 +594,9 @@ if __name__ == "__main__":
     parser.add_argument("--libclang", help="Path to libclang.dll, if it isn't in your PATH")
     parser.add_argument("-I", help="Include path (specify multiple times)", dest="include", action="append", default=[])
     parser.add_argument(
+        "-D", help="Preprocessor macros (specify multiple times)", dest="defines", action="append", default=[]
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -612,7 +615,9 @@ if __name__ == "__main__":
     processor = Processor(RuleSet(config), args.verbose)
     index = Index.create()
     translation_unit = index.parse(
-        args.filename, args=[f"-I{x}" for x in args.include], options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD
+        args.filename,
+        args=[f"-I{x}" for x in args.include] + [f"-D{x}" for x in args.defines],
+        options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
     )
     passed = processor.process(translation_unit)
     if not passed:

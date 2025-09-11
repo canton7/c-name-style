@@ -1,0 +1,26 @@
+name: Run lints
+
+on:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install the project
+        run: uv sync --locked --dev
+
+      - name: Ruff
+        run: uv run ruff check lib
+
+      - name: Mypy
+        run: uv run mypy lib

@@ -1,2 +1,15 @@
+[project]
+name = "c-name-style"
+version = "0.0.0"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17.1",
+    "ruff>=0.13.0",
+]
+
 [tool.ruff]
 line-length = 120

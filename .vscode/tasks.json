@@ -1,0 +1,31 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Ruff",
+            "type": "shell",
+            "command": "uv run ruff check lib",
+            "problemMatcher": [
+                "$python"
+            ]
+        },
+        {
+            "label": "Mypy",
+            "type": "shell",
+            "command": "uv run mypy lib",
+            "problemMatcher": [
+                "$python"
+            ]
+        },
+        {
+            "label": "Lints",
+            "dependsOn": [
+                "Ruff",
+                "Mypy"
+            ],
+            "problemMatcher": [
+                "$python"
+            ]
+        }
+    ]
+}

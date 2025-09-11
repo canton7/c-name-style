@@ -1,0 +1,1 @@
+Mock_Foo.h:2:9: error: Name 'MOCK_FOO_H' fails rule 'Global macros start with the file name' ('MOCK__FOO_[A-Z0-9]([A-Z0-9_]*[A-Z0-9])?')

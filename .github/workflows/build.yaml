@@ -24,3 +24,7 @@ jobs:
 
       - name: Mypy
         run: uv run mypy lib
+
+      - name: Run tests
+        run: |
+          uv run pytest

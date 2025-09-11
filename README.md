@@ -98,9 +98,11 @@ You can also use the following shorthands:
 The `visibility` filter is a comma-separated list of filters on the visibility of the symbol.
 If more than one value is given, only one value has to match for the filter to match.
 
-The possibile visibilities are `local`, `file` and `global`.
+The possibile visibilities are `local`, `file`, `global`, and `static-local`.
 In C files, symbols at file scope with static linkage have `file` visibility, while symbols with external linkage are `global`.
 In header files, everything at file scope has `global` visibility.
+
+`static-local` is a mis-fit, used for local variables with `static` storage.
 
 The sorts of visibility applicable to different `kinds` are given [below](#compatibility).
 
@@ -246,7 +248,7 @@ The relationship between `kind`, `visibility`, and pointers is given below.
 | `kind` | `visibility` | `pointer` |
 |---     |---           | ---       |
 | `parameter` | None | Yes |
-| `variable` | `global`, `file`, `local` | Yes |
+| `variable` | `global`, `file`, `local`, `static-local` | Yes |
 | `function` | `global`, `file` | No |
 | `struct-tag`, `enum-tag`, `union-tag` | `global`, `file` | No |
 | `struct-typedef`, `enum-typedef`, `union-typedef`, `function-typedef`, `scalar-typedef` | `global`, `file` | Yes |

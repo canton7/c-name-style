@@ -9,7 +9,18 @@ from pathlib import Path
 from string import Template
 
 from clang.cindex import Index  # type: ignore
-from clang.cindex import Config, Cursor, CursorKind, LinkageKind, Token, TokenKind, TranslationUnit, TypeKind, conf
+from clang.cindex import (
+    Config,
+    Cursor,
+    CursorKind,
+    LinkageKind,
+    Token,
+    TokenKind,
+    TranslationUnit,
+    TypeKind,
+    StorageClass,
+    conf,
+)
 
 
 class SubstTemplate(Template):
@@ -197,6 +208,8 @@ class Processor:
                 # over those names. People can't control the names of symbols defined elsewhere
                 return (None, None)
             if cursor.linkage == LinkageKind.NO_LINKAGE:
+                if cursor.storage_class == StorageClass.STATIC:
+                    return ("variable", "static-local")
                 return ("variable", "local")
             # In header files, all variables are global (except those in static inline functions, which have no linkage)
             if is_header:

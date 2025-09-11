@@ -1,0 +1,1 @@
+Test.c:5:16: error: Name 'thing' fails rule 'Static local variables must be called s_thing' ('s_thing')

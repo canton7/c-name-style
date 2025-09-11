@@ -171,7 +171,7 @@ class Processor:
     def _to_upper_snake(self, name: str):
         result = name[0].upper()
         for i in range(1, len(name)):
-            if name[i].isupper() and not name[i - 1].isupper():
+            if name[i].isupper() and not (name[i - 1].isupper() or name[i - 1] == "_"):
                 result += "_"
             result += name[i].upper()
         return result

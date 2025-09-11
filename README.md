@@ -85,6 +85,7 @@ If more than one value is given, only one value has to match for the filter to m
 | `struct-member`, `union-member` | A member of a struct, enum or union |
 | `enum-constant` | An enum constant |
 | `macro` | macro definition |
+| `file` | A file name |
 
 You can also use the following shorthands:
  - `tag`: `struct-tag`, `enum-tag` and `union-tag`
@@ -252,6 +253,7 @@ The relationship between `kind`, `visibility`, and pointers is given below.
 | `struct-member`, `union-member` | None | Yes |
 | `enum-constant` | `global`, `file` | No |
 | `macro` | `global`, `file` | No |
+| `file` | None | No |
 
 If a filter type is not supported for a particular symbol kind, then the filter is ignored.
 For example:

@@ -187,6 +187,8 @@ class Processor:
     def _get_config_kind(self, cursor: Cursor, file_path: Path) -> tuple[str | None, str | None]:
         is_header = file_path.suffix in [".h", ".hpp"]
         global_or_file = "global" if is_header else "file"
+        if cursor.kind == CursorKind.TRANSLATION_UNIT:
+            return ("file", None)
         if cursor.kind == CursorKind.PARM_DECL:
             return ("parameter", None)
         if cursor.kind == CursorKind.VAR_DECL:
@@ -323,14 +325,19 @@ class Processor:
         location: str,
         substitute_vars: dict[str, str],
     ) -> bool | None:
-        ignore_comment = next(
-            (
-                x
-                for x in self._ignore_comments.get(cursor.location.file.name, [])
-                if x.start_line <= cursor.location.line and (x.end_line is None or x.end_line >= cursor.location.line)
-            ),
-            None,
-        )
+        # TODO: We don't currently support ignore ocmments for whole files
+        if cursor.kind == CursorKind.TRANSLATION_UNIT:
+            ignore_comment = None
+        else:
+            ignore_comment = next(
+                (
+                    x
+                    for x in self._ignore_comments.get(cursor.location.file.name, [])
+                    if x.start_line <= cursor.location.line
+                    and (x.end_line is None or x.end_line >= cursor.location.line)
+                ),
+                None,
+            )
 
         name_without_prefix_suffix = name
         success: bool | None = True
@@ -431,17 +438,18 @@ class Processor:
         return success
 
     def _process_node(self, cursor: Cursor) -> bool:
-        if cursor.kind == CursorKind.TRANSLATION_UNIT:
-            return True
-
         # There might be prototypes earlier in the file. We only want to warn once
         self._process_included_node(cursor)
-        if not conf.lib.clang_Location_isFromMainFile(cursor.location):
+        if cursor.kind != CursorKind.TRANSLATION_UNIT and not conf.lib.clang_Location_isFromMainFile(cursor.location):
+            # print("Exiting")
             return True
 
-        file_path = Path(cursor.location.file.name)
-
-        location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
+        if cursor.kind == CursorKind.TRANSLATION_UNIT:
+            file_path = Path(cursor.spelling)
+            location = cursor.spelling
+        else:
+            file_path = Path(cursor.location.file.name)
+            location = f"{cursor.location.file}:{cursor.location.line}:{cursor.location.column}"
 
         # Ignore function/struct/union definitions that we've found the prototype / previous declaration for
         # (If someone types 'struct Name_Foo_tag' in a header, then 'struct Name_Foo_tag { .. }' in the source file, we don't want to warn for the source file)
@@ -462,7 +470,12 @@ class Processor:
         if config_kind is None:
             return True
 
-        name = "" if self._is_struct_enum_union_unnamed(cursor) else cursor.spelling
+        if cursor.kind == CursorKind.TRANSLATION_UNIT:
+            name = file_path.name
+        elif self._is_struct_enum_union_unnamed(cursor):
+            name = ""
+        else:
+            name = cursor.spelling
 
         pointer_level = None
         if cursor.kind in [CursorKind.VAR_DECL, CursorKind.PARM_DECL, CursorKind.TYPEDEF_DECL, CursorKind.FIELD_DECL]:

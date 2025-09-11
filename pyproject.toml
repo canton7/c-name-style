@@ -7,6 +7,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "libclang>=18.1.1",
     "mypy>=1.17.1",
     "pytest>=8.4.2",
     "pytest-snapshot>=0.9.0",

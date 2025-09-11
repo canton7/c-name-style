@@ -1,0 +1,1 @@
+test.c: error: Name 'test.c' fails rule 'File names must be PascalCase' ('[A-Z0-09][a-zA-Z0-9]*\.[ch]')

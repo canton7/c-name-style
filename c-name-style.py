@@ -44,17 +44,13 @@ class RuleSet:
                 self.placeholders = {f"p:{k}": v for k, v in config.items(section_name)}
                 continue
 
-            kinds = section.get("kind")
-            if kinds is not None:
-                kinds = [x.strip() for x in kinds.split(",")]
+            def get_split(section_name: str) -> list[str] | None:
+                string_value = section.get(section_name)
+                return [x.strip() for x in string_value.split(",")] if string_value is not None else None
 
-            variable_types = section.get("type")
-            if variable_types is not None:
-                variable_types = [x.strip() for x in variable_types.split(",")]
-
-            visibility = section.get("visibility")
-            if visibility is not None:
-                visibility = [x.strip() for x in visibility.split(",")]
+            kinds = get_split("kind")
+            variable_types = get_split("type")
+            visibility = get_split("visibility")
 
             file = section.get("file")
             not_file = section.get("not-file")
